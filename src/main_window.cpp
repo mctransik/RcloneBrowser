@@ -1177,6 +1177,35 @@ void MainWindow::checkRcloneUpdate(bool interactive) {
 }
 
 void MainWindow::offerRcloneDownload() {
+  // Signature-verified selfupdate needs an existing trusted rclone binary.
+  // The distributed portable packages already bundle one. A bare source
+  // build without rclone cannot safely bootstrap using selfupdate alone.
+  if (!QFileInfo(RcloneUpdater::managedPath()).isExecutable() &&
+      RcloneUpdater::bundledPath().isEmpty() &&
+      (GetRclone().isEmpty() ||
+       (!QFileInfo(GetRclone()).isExecutable() &&
+        QStandardPaths::findExecutable(GetRclone()).isEmpty()))) {
+    QMessageBox first(this);
+    first.setWindowTitle(tr("A verified rclone is required"));
+    first.setIcon(QMessageBox::Information);
+    first.setText(tr("No rclone executable was found."));
+    first.setInformativeText(
+        tr("For secure updates, first obtain rclone from its official "
+           "website and independently verify the release signature. "
+           "Then use Locate rclone to select the executable."));
+    auto *website = first.addButton(tr("Official downloads"), QMessageBox::ActionRole);
+    auto *locateFirst = first.addButton(tr("Locate rclone…"), QMessageBox::ActionRole);
+    first.addButton(QMessageBox::Cancel);
+    first.exec();
+    if (first.clickedButton() == website) {
+      QDesktopServices::openUrl(QUrl("https://rclone.org/downloads/"));
+    } else if (first.clickedButton() == locateFirst) {
+      emit ui.preferences->trigger();
+    }
+    updateRcloneStatus();
+    return;
+  }
+
   QMessageBox box(this);
   box.setIcon(QMessageBox::Question);
   box.setWindowTitle(tr("rclone not found"));

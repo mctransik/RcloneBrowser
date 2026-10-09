@@ -229,6 +229,28 @@ void RcloneUpdater::install(const QString &version) {
     return;
   }
 
+  // The built-in updater is a separate process. Propagate the configured
+  // proxy to it explicitly; Qt's QNetworkAccessManager proxy does not apply.
+  QProcessEnvironment childEnv = QProcessEnvironment::systemEnvironment();
+  const auto settings = GetSettings();
+  if (settings->value("Settings/useProxy").toBool()) {
+    QString proxyText = settings->value("Settings/https_proxy").toString().trimmed();
+    if (proxyText.isEmpty()) {
+      proxyText = settings->value("Settings/http_proxy").toString().trimmed();
+    }
+    const QUrl proxy(proxyText);
+    if (!proxy.isValid() || proxy.host().isEmpty() ||
+        (proxy.scheme() != QLatin1String("http") &&
+         proxy.scheme() != QLatin1String("https"))) {
+      emit failed(tr("The configured HTTP(S) proxy URL is invalid. "
+                     "No update was attempted."));
+      return;
+    }
+    childEnv.insert("HTTPS_PROXY", proxy.toString(QUrl::FullyEncoded));
+    childEnv.insert("HTTP_PROXY", proxy.toString(QUrl::FullyEncoded));
+    childEnv.insert("NO_PROXY", settings->value("Settings/no_proxy").toString());
+  }
+
   mBusy = true;
   mCancelled = false;
   mWorkDir = std::make_unique<QTemporaryDir>();
@@ -252,6 +274,7 @@ void RcloneUpdater::install(const QString &version) {
   emit progress(0, 0);
   auto *p = new QProcess(this);
   mSelfUpdateProcess = p;
+  p->setProcessEnvironment(childEnv);
 
   connect(p, &QProcess::errorOccurred, this,
           [this, p](QProcess::ProcessError error) {
@@ -264,7 +287,7 @@ void RcloneUpdater::install(const QString &version) {
             fail(tr("Could not start rclone's signed updater."));
           });
   connect(p, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
-          [this, p, version, stageDir, output](int exitCode,
+          [this, p, version, stageDir, output, updaterExe](int exitCode,
                                                 QProcess::ExitStatus exitStatus) {
             if (mSelfUpdateProcess != p) {
               return;
@@ -272,6 +295,8 @@ void RcloneUpdater::install(const QString &version) {
             mSelfUpdateProcess = nullptr;
             const QString details =
                 QString::fromUtf8(p->readAllStandardError()).trimmed().left(400);
+            const QString standardOutput =
+                QString::fromUtf8(p->readAllStandardOutput()).trimmed();
             p->deleteLater();
             if (mCancelled) {
               fail(QString());
@@ -285,6 +310,25 @@ void RcloneUpdater::install(const QString &version) {
               return;
             }
             if (!QFileInfo(output).isFile()) {
+              // rclone selfupdate exits successfully *without writing --output*
+              // when the selected version is already running.
+              const bool upToDate =
+                  (details + standardOutput).contains(
+                      "rclone is up to date", Qt::CaseInsensitive);
+              if (upToDate) {
+                if (QFileInfo(updaterExe).canonicalFilePath() ==
+                        QFileInfo(managedPath()).canonicalFilePath() &&
+                    QFileInfo(managedPath()).isExecutable()) {
+                  mBusy = false;
+                  mWorkDir.reset();
+                  emit status(tr("rclone %1 is already installed.").arg(version));
+                  emit installed(version, managedPath());
+                  return;
+                }
+                fail(tr("The selected rclone version is already present in "
+                        "another location. No managed copy was installed."));
+                return;
+              }
               fail(tr("Signed updater did not produce the expected executable."));
               return;
             }
