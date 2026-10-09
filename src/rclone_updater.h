@@ -2,11 +2,11 @@
 
 #include "pch.h"
 
-// Downloads, verifies and installs rclone releases.
+// Installs rclone releases using rclone's own signature-verified selfupdate.
 //
-// Sources: downloads.rclone.org (official) with GitHub Releases as fallback.
-// Every download is checked against rclone's published SHA256SUMS before it
-// is used. The installed copy lives next to Rclone Browser in portable mode
+// rclone selfupdate checks SHA-256 and the signed SHA256SUMS with a public
+// release key compiled into the existing rclone binary. It writes a staged
+// executable, which is validated before replacing the managed copy. The installed copy lives next to Rclone Browser in portable mode
 // (<app dir>/rclone/rclone.exe, stored as a relative path so the folder can
 // be moved) or in the per-user app data folder otherwise.
 //
@@ -58,16 +58,13 @@ private:
 
   QNetworkReply *get(const QUrl &url);
   void checkFrom(int sourceIndex);
-  void downloadFrom(int sourceIndex, const QString &version);
-  void verifyAndExtract(const QString &version, const QByteArray &zip,
-                        const QByteArray &sums);
-  void extract(const QString &version, const QString &zipPath, int attempt);
   void finishInstall(const QString &version, const QString &extractDir);
   void fail(const QString &error);
 
   QNetworkAccessManager *mNet;
   QList<Source> mSources;
   QPointer<QNetworkReply> mReply;
+  QPointer<QProcess> mSelfUpdateProcess;
   std::unique_ptr<QTemporaryDir> mWorkDir;
   bool mBusy = false;
   bool mCancelled = false;

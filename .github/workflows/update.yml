@@ -224,6 +224,9 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write # publish the release
+      id-token: write # Sigstore identity for provenance
+      attestations: write # publish provenance
+      artifact-metadata: write # associate release artifacts
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -255,6 +258,14 @@ jobs:
           )
           open("dist/release-notes.md", "w", encoding="utf-8").write(notes)
           PY
+
+      # Record provenance for the exact distributed archives on tag releases.
+      - name: Attest release archives
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.AppImage
 
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
