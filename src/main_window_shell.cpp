@@ -273,7 +273,7 @@ void MainWindow::buildShell() {
     return it;
   };
   addPage("home", tr("Dashboard"), DashboardPage);
-  addPage("drive", tr("Storage"), HomePage);
+  addPage("cloud", tr("Storage"), HomePage);
   addPage("folder", tr("File manager"), FileManagerPage);
   mNavTransfers = addPage("transfers", tr("Transfers"), TransfersPage);
   addPage("connected", tr("Security"), SecurityPage);
@@ -444,6 +444,7 @@ void MainWindow::buildShell() {
     addMetric(0, 0, tr("Configured remotes"), &mDashboardRemotes);
     addMetric(0, 1, tr("rclone installation"), &mDashboardRclone);
     addMetric(1, 0, tr("Running jobs"), &mDashboardTransfers);
+    mDashboardTransfers->setText("0");
     auto *usage = new QFrame(dashboard);
     usage->setProperty("card", true);
     usage->setAttribute(Qt::WA_StyledBackground);
