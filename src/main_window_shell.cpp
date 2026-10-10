@@ -3,6 +3,7 @@
 // and their logic are kept; this file only rearranges and restyles them.
 
 #include "main_window.h"
+#include "dual_pane_widget.h"
 #include "remote_widget.h"
 #include "theme.h"
 #include "utils.h"
@@ -78,7 +79,8 @@ public:
   }
 };
 
-enum Page { HomePage = 0, TransfersPage = 1, TasksPage = 2, BrowserPage = 3 };
+enum Page { HomePage = 0, TransfersPage = 1, TasksPage = 2, BrowserPage = 3,
+            DashboardPage = 4, FileManagerPage = 5, SecurityPage = 6 };
 
 QLabel *makeLabel(const QString &text, const char *objectName) {
   auto *l = new QLabel(text);
@@ -228,10 +230,13 @@ void MainWindow::buildShell() {
     it->setData(FilledIconRole, Theme::icon(icon + "_filled"));
     return it;
   };
-  addPage("home", tr("Home"), HomePage);
+  addPage("home", tr("Dashboard"), DashboardPage);
+  addPage("drive", tr("Storage"), HomePage);
+  addPage("folder", tr("File manager"), FileManagerPage);
   mNavTransfers = addPage("transfers", tr("Transfers"), TransfersPage);
+  addPage("connected", tr("Security"), SecurityPage);
   addPage("tasks", tr("Saved tasks"), TasksPage);
-  mNav->setFixedHeight(3 * 42 + 4);
+  mNav->setFixedHeight(6 * 42 + 4);
   mNav->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   navLayout->addWidget(mNav);
 
@@ -367,7 +372,122 @@ void MainWindow::buildShell() {
     mPages->addWidget(w);
   }
   mPages->addWidget(ui.tabs);
-  cl->addWidget(mPages);
+
+  // Operational dashboard. Values come from the loaded remotes, active jobs
+  // and detected rclone version, never from fabricated cloud usage numbers.
+  {
+    auto *dashboard = new QWidget;
+    auto *v = new QVBoxLayout(dashboard);
+    setPageMargins(v);
+    v->addWidget(makePageHeader(
+        tr("Dashboard"),
+        tr("Your clouds, running transfers and update status at a glance."),
+        nullptr, {}));
+    auto *metrics = new QGridLayout;
+    metrics->setSpacing(12);
+    auto addMetric = [&](int row, int column, const QString &title, QLabel **value) {
+      auto *card = new QFrame(dashboard);
+      card->setProperty("card", true);
+      card->setAttribute(Qt::WA_StyledBackground);
+      auto *contents = new QVBoxLayout(card);
+      contents->setContentsMargins(18, 16, 18, 16);
+      auto *label = new QLabel(title);
+      label->setObjectName("PageSubtitle");
+      contents->addWidget(label);
+      *value = new QLabel(tr("Not checked"));
+      (*value)->setObjectName("PageTitle");
+      contents->addWidget(*value);
+      metrics->addWidget(card, row, column);
+    };
+    addMetric(0, 0, tr("Configured remotes"), &mDashboardRemotes);
+    addMetric(0, 1, tr("rclone installation"), &mDashboardRclone);
+    addMetric(1, 0, tr("Running jobs"), &mDashboardTransfers);
+    auto *usage = new QFrame(dashboard);
+    usage->setProperty("card", true);
+    usage->setAttribute(Qt::WA_StyledBackground);
+    auto *usageLayout = new QVBoxLayout(usage);
+    usageLayout->setContentsMargins(18, 16, 18, 16);
+    usageLayout->addWidget(new QLabel(tr("Storage usage")));
+    auto *usageNote = new QLabel(tr("Usage appears only when a provider supplies reliable capacity data. "
+                                   "Crypt and underlying remotes must not be counted twice."));
+    usageNote->setWordWrap(true);
+    usageNote->setObjectName("PageSubtitle");
+    usageLayout->addWidget(usageNote);
+    metrics->addWidget(usage, 1, 1);
+    v->addLayout(metrics);
+    auto *quick = new QPushButton(tr("Open file manager"));
+    quick->setIcon(Theme::icon("folder"));
+    v->addWidget(quick, 0, Qt::AlignLeft);
+    connect(quick, &QPushButton::clicked, this,
+            [this]() { showPage(FileManagerPage); });
+    v->addStretch(1);
+    mPages->addWidget(dashboard);
+  }
+
+  mDualPane = new DualPaneWidget(&mIcons, mPages);
+  connect(mDualPane, &DualPaneWidget::addTransfer, this, &MainWindow::addTransfer);
+  connect(mDualPane, &DualPaneWidget::addMount, this, &MainWindow::addMount);
+  connect(mDualPane, &DualPaneWidget::addStream, this, &MainWindow::addStream);
+  connect(mDualPane, &DualPaneWidget::openInTab, this,
+          [this](const QString &name, const QString &type) {
+            openRemote(name, type, true);
+          });
+  mPages->addWidget(mDualPane);
+
+  // Readable security information, with unknown state until real evidence
+  // exists. A successful version check is NOT a verified update.
+  {
+    auto *security = new QWidget;
+    auto *v = new QVBoxLayout(security);
+    setPageMargins(v);
+    v->addWidget(makePageHeader(
+        tr("Security center"),
+        tr("Software versions, signed updates and verifiable build provenance."),
+        nullptr, {}));
+    auto section = [&](const QString &title, const QString &body) {
+      auto *card = new QFrame(security);
+      card->setProperty("card", true);
+      card->setAttribute(Qt::WA_StyledBackground);
+      auto *inner = new QVBoxLayout(card);
+      inner->setContentsMargins(18, 14, 18, 14);
+      auto *name = new QLabel(title);
+      name->setObjectName("PageTitle");
+      inner->addWidget(name);
+      auto *detail = new QLabel(body);
+      detail->setWordWrap(true);
+      detail->setTextInteractionFlags(Qt::TextSelectableByMouse |
+                                      Qt::LinksAccessibleByMouse);
+      inner->addWidget(detail);
+      v->addWidget(card);
+      return detail;
+    };
+    mSecurityRclone = section(tr("rclone version"), tr("Not detected yet"));
+    section(tr("Signed rclone updates"),
+            tr("The updater uses rclone selfupdate to check PGP-signed release checksums. "
+               "A last-successful-verification record is not yet implemented, "
+               "so this panel does not claim a completed verification."));
+    section(tr("Application build provenance"),
+            tr("Release attestations must be verified against the actual downloaded archive. "
+               "No local attestation verification has been performed by this interface."));
+    auto *check = new QPushButton(tr("Check for rclone updates"));
+    connect(check, &QPushButton::clicked, this,
+            [this]() { checkRcloneUpdate(true); });
+    v->addWidget(check, 0, Qt::AlignLeft);
+    v->addStretch(1);
+    mPages->addWidget(security);
+  }
+  cl->addWidget(mPages, 1);
+
+  // Compact persistent transfer indicator; opens the existing full job page.
+  mTransferStrip = new QToolButton(content);
+  mTransferStrip->setIcon(Theme::icon("transfers"));
+  mTransferStrip->setText(tr("Transfers"));
+  mTransferStrip->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  mTransferStrip->setCursor(Qt::PointingHandCursor);
+  mTransferStrip->hide();
+  cl->addWidget(mTransferStrip);
+  connect(mTransferStrip, &QToolButton::clicked, this,
+          [this]() { showPage(TransfersPage); });
 
   ui.tabs->setAttribute(Qt::WA_StyledBackground);
   ui.tabs->setDocumentMode(true);
@@ -425,7 +545,7 @@ void MainWindow::buildShell() {
     ui.open->hide();
 
     QLabel *sub = nullptr;
-    v->insertWidget(0, makePageHeader(tr("Remotes"),
+    v->insertWidget(0, makePageHeader(tr("Storage"),
                                       tr("Your cloud storage, as configured in rclone."),
                                       &sub, {ui.refresh, ui.config}));
     mHomeSubtitle = sub;
@@ -548,6 +668,7 @@ void MainWindow::buildShell() {
                    });
 
   mNav->setCurrentRow(0);
+  showPage(DashboardPage);
 }
 
 int MainWindow::remoteTab(const QString &name) const {
@@ -740,6 +861,14 @@ void MainWindow::rebuildNavRemotes() {
     it->setData(TypeRole, src->data(Qt::UserRole));
     it->setToolTip(src->text() + " · " + src->data(Qt::UserRole).toString());
   }
+  if (mDashboardRemotes) mDashboardRemotes->setText(QString::number(n));
+  if (mDualPane) {
+    QList<QPair<QString, QString>> available;
+    for (QListWidgetItem *src : sources) {
+      available.append(qMakePair(src->text(), src->data(Qt::UserRole).toString()));
+    }
+    mDualPane->setRemotes(available);
+  }
   mNavRemoteCount->setText(QString::number(n));
   mNavRemoteCount->setVisible(n > 0);
   ui.remotes->setVisible(n > 0);
@@ -765,6 +894,13 @@ void MainWindow::updateThemeButton() {
 }
 
 void MainWindow::setJobsTabText(const QString &text) {
+  if (mDashboardTransfers) {
+    mDashboardTransfers->setText(QString::number(mJobCount));
+  }
+  if (mTransferStrip) {
+    mTransferStrip->setVisible(mJobCount > 0);
+    mTransferStrip->setText(tr("%1 active transfer(s) — show details").arg(mJobCount));
+  }
   if (mNavTransfers) {
     static const QRegularExpression rx(R"(\((\d+)\))");
     const auto m = rx.match(text);
