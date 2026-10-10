@@ -25,13 +25,18 @@ def verify_release(archive, sums, key, gpg="gpg", permitted=frozenset({PINNED_SI
         raise ValueError("Unsigned SHA256SUMS; refusing to bundle rclone")
     # Fresh independent keyring; never use (or change) any user's keys.
     with tempfile.TemporaryDirectory(prefix="rclone-pgp-") as temp:
-        common = [str(gpg), "--batch", "--no-tty", "--homedir", temp,
+        # Use the temp folder as CWD and a relative home; Git for Windows
+        # GnuPG can mishandle native absolute Windows paths in --homedir.
+        # Feeding key and signed sums via stdin avoids those path issues too.
+        common = [str(gpg), "--batch", "--no-tty", "--homedir", ".",
                   "--no-auto-key-retrieve"]
-        key_import = subprocess.run(common + ["--import", str(key)],
-                                    capture_output=True, timeout=30)
+        key_import = subprocess.run(common + ["--import"], input=key.read_bytes(),
+                                    cwd=temp, capture_output=True, timeout=30)
         if key_import.returncode:
-            raise ValueError("Could not import bundled public key")
-        result = subprocess.run(common + ["--status-fd", "2", "--decrypt", str(sums)],
+            diagnostics = key_import.stderr.decode("utf-8", "replace")[-650:]
+            raise ValueError("Could not import bundled public key: " + diagnostics)
+        result = subprocess.run(common + ["--status-fd", "2", "--decrypt"],
+                                input=sums.read_bytes(), cwd=temp,
                                 capture_output=True, timeout=45)
         if result.returncode:
             raise ValueError("PGP signature of SHA256SUMS is invalid")
