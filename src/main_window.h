@@ -5,6 +5,7 @@
 #include "pch.h"
 
 class RcloneUpdater;
+class DualPaneWidget;
 #include "ui_main_window.h"
 
 class JobWidget;
@@ -75,7 +76,13 @@ private:
   QListWidget *mNavRemotes = nullptr;
   QLabel *mNavRemoteCount = nullptr;
   QToolButton *mThemeButton = nullptr;
-  QStackedWidget *mPages = nullptr; // Home, Transfers, Tasks, remote tabs
+  QStackedWidget *mPages = nullptr; // Storage, transfers, tasks, tabs, dashboard, files, security
+  DualPaneWidget *mDualPane = nullptr;
+  QLabel *mDashboardRemotes = nullptr;
+  QLabel *mDashboardRclone = nullptr;
+  QLabel *mDashboardTransfers = nullptr;
+  QLabel *mSecurityRclone = nullptr;
+  QToolButton *mTransferStrip = nullptr;
   void showPage(int page);
   QToolButton *mNewTab = nullptr;
   void updateNewTabButton();
