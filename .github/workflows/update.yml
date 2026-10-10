@@ -257,6 +257,12 @@ jobs:
         run: |
           set -euo pipefail
           ver=$(head -1 VERSION | tr -d '[:space:]')
+          # A tagged release must target the intended version. Do not publish
+          # another version accidentally or on a malformed tag.
+          if [[ "$GITHUB_REF_NAME" != "v${ver}" &&
+                "$GITHUB_REF_NAME" != "v${ver}-rc.1" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match VERSION=$ver"; exit 1
+          fi
           echo "VERSION=$ver" >> "$GITHUB_ENV"
           (cd dist && sha256sum *.zip *.AppImage > SHA256SUMS.txt && cat SHA256SUMS.txt)
           python3 - "$ver" <<'PY'
@@ -266,6 +272,7 @@ jobs:
           m = re.search(r"(?ms)^## \[" + re.escape(ver) + r"\][^\n]*\n(.*?)(?=^## |\Z)", log)
           notes = m.group(1).strip() if m else "See CHANGELOG.md for details."
           notes += (
+              "\n\n**Security RC1: Evaluation only. Test with a separate copy; do not use for production cloud data or backups.**\n\n"
               "\n\n---\n**Downloads**\n\n"
               f"- **Windows 10/11:** `RcloneBrowser-{ver}-windows-x64.zip`, extract anywhere and run `RcloneBrowser.exe`.\n"
               f"- **Linux (x86_64):** `RcloneBrowser-{ver}-linux-x86_64.AppImage`, make it executable (`chmod +x`) and run it.\n\n"
@@ -284,7 +291,8 @@ jobs:
 
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          name: Rclone Browser ${{ env.VERSION }}
+          name: Rclone Browser ${{ github.ref_name }} — security test build
+          prerelease: ${{ contains(github.ref_name, '-rc.') }}
           body_path: dist/release-notes.md
           files: |
             dist/*.zip

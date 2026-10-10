@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.0.2] - 2026-10-10 (RC1 security test build)
+
+### Security
+- Verify rclone updates using rclone's built-in PGP-signed `SHA256SUMS` verification.
+- Check the upstream rclone PGP signature and matching SHA-256 checksum in both Windows and Linux packaging jobs.
+- Pin the official release signing key fingerprint and isolate temporary GnuPG keyrings.
+- Publish GitHub build provenance attestations for tagged releases.
+
+### Reliability
+- Handle already-current rclone versions and forward proxy settings to the updater.
+- Provide a secure manual bootstrap path when no verified rclone binary is available.
+- Add automated tests for correct signatures, tampering, mismatched signer, and missing checksum entries.
+
+**Test status:** Release candidate for evaluation; not yet suitable for production backups.
+**Attribution:** Based on the MIT-licensed Rclone Browser by Jackpison and earlier maintainers.
+
 ## [4.0.1] - 2026-10-09
 
 ### Fixed
