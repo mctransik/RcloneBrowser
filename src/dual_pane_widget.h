@@ -4,6 +4,7 @@
 
 class IconCache;
 class RemoteWidget;
+class LocalBrowserWidget;
 
 // Independent two-pane workspace. Reuses the existing RemoteWidget (and its
 // rclone-backed models) rather than implementing a second file browser.
@@ -27,12 +28,16 @@ private:
     QComboBox *chooser = nullptr;
     QVBoxLayout *layout = nullptr;
     RemoteWidget *browser = nullptr;
+    LocalBrowserWidget *localBrowser = nullptr;
+    QString key;
   };
   IconCache *mIcons;
   Pane mLeft;
   Pane mRight;
   QSplitter *mSplitter = nullptr;
-  void buildPane(Pane &pane, const QString &caption);
+  static constexpr const char *kLocalLocation = "@local";
+  void buildPane(Pane &pane, const QString &caption,
+                 const QString &key);
   void showSelectedRemote(Pane &pane);
   void copyBetween(bool leftToRight);
 };
