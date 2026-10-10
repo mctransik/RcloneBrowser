@@ -152,9 +152,9 @@ void DualPaneWidget::copyBetween(bool leftToRight) {
   if (name.isEmpty() || name == "." || name == "..") return;
   const bool folder = source->selectedEntryIsFolder();
   const QString dst = targetDir + (targetDir.endsWith('/') || targetDir.endsWith(':') ? "" : "/") + name;
-  if (src == dst) {
-    QMessageBox::warning(this, tr("Same source and destination"),
-                         tr("Choose a different destination."));
+  if (src == dst || (folder && dst.startsWith(src + "/"))) {
+    QMessageBox::warning(this, tr("Invalid destination"),
+                         tr("A folder cannot be copied into itself or one of its subfolders."));
     return;
   }
   // Only copy. Never sync, delete, move or overwrite existing files.
