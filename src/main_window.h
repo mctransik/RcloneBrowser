@@ -98,5 +98,6 @@ private:
   bool eventFilter(QObject *o, QEvent *e) override;
   void syncNavToCurrentPage();
   void rebuildNavRemotes();
+  void refreshStorageCapacities();
   void setJobsTabText(const QString &text);
 };
