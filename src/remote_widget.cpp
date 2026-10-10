@@ -11,7 +11,7 @@
 
 RemoteWidget::RemoteWidget(IconCache *iconCache, const QString &remote,
                            bool isLocal, bool isGoogle, QWidget *parent)
-    : QWidget(parent) {
+    : QWidget(parent), mRemote(remote) {
   ui.setupUi(this);
 
 QString root = isLocal ? "/" : QString();
@@ -1267,4 +1267,38 @@ void RemoteWidget::applyFilter(ItemModel *model) {
   if (!text.isEmpty()) {
     ui.tree->expand(folder);
   }
+}
+
+
+// The existing tree selection is mirrored from the icon view, so these
+// helpers work in both display modes. They never change remote state.
+QString RemoteWidget::selectedRemotePath() const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  const QModelIndex selected = ui.tree->currentIndex().siblingAtColumn(0);
+  if (!model || !selected.isValid() || model->isTopLevel(selected)) return QString();
+  return mRemote + ":" + model->path(selected).path();
+}
+
+QString RemoteWidget::selectedEntryName() const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  const QModelIndex selected = ui.tree->currentIndex().siblingAtColumn(0);
+  if (!model || !selected.isValid() || model->isTopLevel(selected)) return QString();
+  return model->data(selected, Qt::DisplayRole).toString();
+}
+
+bool RemoteWidget::selectedEntryIsFolder() const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  const QModelIndex selected = ui.tree->currentIndex().siblingAtColumn(0);
+  return model && selected.isValid() && model->isFolder(selected);
+}
+
+QString RemoteWidget::currentRemoteFolder() const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  if (!model) return QString();
+  QModelIndex selected = ui.tree->currentIndex().siblingAtColumn(0);
+  if (!selected.isValid()) selected = model->index(0, 0, QModelIndex());
+  if (!selected.isValid()) return mRemote + ":";
+  if (!model->isFolder(selected)) selected = selected.parent();
+  return selected.isValid() ? mRemote + ":" + model->path(selected).path()
+                            : mRemote + ":";
 }
