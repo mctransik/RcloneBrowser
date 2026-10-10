@@ -148,6 +148,9 @@ void RcloneUpdater::cancel() {
   if (mReply) {
     mReply->abort();
   }
+  if (mSelfUpdateProcess) {
+    mSelfUpdateProcess->kill();
+  }
 }
 
 // ---------------------------------------------------------------- check ----
@@ -203,6 +206,51 @@ void RcloneUpdater::install(const QString &version) {
   if (mBusy) {
     return;
   }
+
+  // Fail closed: only a stable version may be selected.
+  static const QRegularExpression kStable(R"(^v[0-9]+\.[0-9]+\.[0-9]+$)");
+  if (!kStable.match(version).hasMatch()) {
+    emit failed(tr("Invalid stable rclone version: %1").arg(version));
+    return;
+  }
+
+  // Prefer already installed managed rclone. Linux AppImage can fall back
+  // to its bundled binary for the first signature-checked update.
+  QString updaterExe = managedPath();
+  if (!QFileInfo(updaterExe).isExecutable()) {
+    updaterExe = GetRclone();
+  }
+  if (!QFileInfo(updaterExe).isExecutable()) {
+    updaterExe = bundledPath();
+  }
+  if (!QFileInfo(updaterExe).isExecutable()) {
+    emit failed(tr("A working rclone executable is required to verify signed "
+                   "updates. No change was made."));
+    return;
+  }
+
+  // The built-in updater is a separate process. Propagate the configured
+  // proxy to it explicitly; Qt's QNetworkAccessManager proxy does not apply.
+  QProcessEnvironment childEnv = QProcessEnvironment::systemEnvironment();
+  const auto settings = GetSettings();
+  if (settings->value("Settings/useProxy").toBool()) {
+    QString proxyText = settings->value("Settings/https_proxy").toString().trimmed();
+    if (proxyText.isEmpty()) {
+      proxyText = settings->value("Settings/http_proxy").toString().trimmed();
+    }
+    const QUrl proxy(proxyText);
+    if (!proxy.isValid() || proxy.host().isEmpty() ||
+        (proxy.scheme() != QLatin1String("http") &&
+         proxy.scheme() != QLatin1String("https"))) {
+      emit failed(tr("The configured HTTP(S) proxy URL is invalid. "
+                     "No update was attempted."));
+      return;
+    }
+    childEnv.insert("HTTPS_PROXY", proxy.toString(QUrl::FullyEncoded));
+    childEnv.insert("HTTP_PROXY", proxy.toString(QUrl::FullyEncoded));
+    childEnv.insert("NO_PROXY", settings->value("Settings/no_proxy").toString());
+  }
+
   mBusy = true;
   mCancelled = false;
   mWorkDir = std::make_unique<QTemporaryDir>();
@@ -210,164 +258,86 @@ void RcloneUpdater::install(const QString &version) {
     fail(tr("Cannot create a temporary folder."));
     return;
   }
-  downloadFrom(0, version);
-}
 
-void RcloneUpdater::downloadFrom(int i, const QString &version) {
-  if (i >= mSources.size()) {
-    fail(tr("Downloading rclone %1 failed from all sources.").arg(version));
+  const QString stageDir = mWorkDir->filePath("signed-update");
+  if (!QDir().mkpath(stageDir)) {
+    fail(tr("Cannot create a temporary update folder."));
     return;
   }
-  const QString base = mSources[i].baseUrl.arg(version);
-  const QString zipName =
-      QString("rclone-%1-%2.zip").arg(version, platformSuffix());
-  const QString host = QUrl(base).host();
+  const QString output = QDir(stageDir).filePath(exeName());
 
-  // 1) checksums (small)  2) the archive itself (with progress)
-  emit status(tr("Fetching checksums from %1…").arg(host));
-  QNetworkReply *sumsReply = get(QUrl(base + "/SHA256SUMS"));
-  connect(sumsReply, &QNetworkReply::finished, this, [=, this]() {
-    sumsReply->deleteLater();
-    if (mCancelled) {
-      fail(QString());
-      return;
-    }
-    if (sumsReply->error() != QNetworkReply::NoError) {
-      downloadFrom(i + 1, version);
-      return;
-    }
-    const QByteArray sums = sumsReply->readAll();
-
-    emit status(tr("Downloading %1 from %2…").arg(zipName, host));
-    QNetworkReply *zipReply = get(QUrl(base + "/" + zipName));
-    connect(zipReply, &QNetworkReply::downloadProgress, this,
-            [this, zipReply](qint64 got, qint64 total) {
-              // rclone zips are ~30 MB; refuse anything absurdly large
-              constexpr qint64 kMaxDownload = 256LL * 1024 * 1024;
-              if (got > kMaxDownload || total > kMaxDownload) {
-                zipReply->abort();
-                return;
-              }
-              emit progress(got, total);
-            });
-    connect(zipReply, &QNetworkReply::finished, this, [=, this]() {
-      zipReply->deleteLater();
-      if (mCancelled) {
-        fail(QString());
-        return;
-      }
-      // after redirects the file must still have come over HTTPS
-      if (zipReply->error() != QNetworkReply::NoError ||
-          zipReply->url().scheme() != QLatin1String("https")) {
-        downloadFrom(i + 1, version);
-        return;
-      }
-      verifyAndExtract(version, zipReply->readAll(), sums);
-    });
-  });
-}
-
-void RcloneUpdater::verifyAndExtract(const QString &version,
-                                     const QByteArray &zip,
-                                     const QByteArray &sums) {
-  const QString zipName =
-      QString("rclone-%1-%2.zip").arg(version, platformSuffix());
-
-  emit status(tr("Verifying download…"));
-  QString expected;
-  const QRegularExpression rx("^([0-9a-fA-F]{64})\\s+\\*?" +
-                              QRegularExpression::escape(zipName) + "\\s*$");
-  for (const QByteArray &line : sums.split('\n')) {
-    auto m = rx.match(QString::fromUtf8(line).trimmed());
-    if (m.hasMatch()) {
-      expected = m.captured(1).toLower();
-      break;
-    }
-  }
-  if (expected.isEmpty()) {
-    fail(tr("No checksum published for %1 – refusing to install.").arg(zipName));
-    return;
-  }
-  const QString actual =
-      QString::fromLatin1(QCryptographicHash::hash(zip, QCryptographicHash::Sha256).toHex());
-  if (actual != expected) {
-    fail(tr("Checksum mismatch for %1 – the download is corrupt or has been "
-            "tampered with. Nothing was installed.").arg(zipName));
-    return;
-  }
-
-  const QString zipPath = mWorkDir->filePath(zipName);
-  QFile f(zipPath);
-  if (!f.open(QIODevice::WriteOnly) || f.write(zip) != zip.size()) {
-    fail(tr("Cannot write %1.").arg(QDir::toNativeSeparators(zipPath)));
-    return;
-  }
-  f.close();
-  extract(version, zipPath, 0);
-}
-
-void RcloneUpdater::extract(const QString &version, const QString &zipPath,
-                            int attempt) {
-  const QString outDir = mWorkDir->filePath("x");
-  QDir().mkpath(outDir);
-
-  // Qt has no public unzip API. Windows 10 (1803+) and 11 ship bsdtar as
-  // tar.exe which reads zip; PowerShell's Expand-Archive is the fallback.
-  QString program;
-  QStringList args;
-#ifdef Q_OS_WIN
-  const QString sys32 = QDir(qEnvironmentVariable("SystemRoot", "C:\\Windows"))
-                            .filePath("System32");
-  if (attempt == 0) {
-    program = QDir(sys32).filePath("tar.exe");
-    args << "-xf" << QDir::toNativeSeparators(zipPath) << "-C"
-         << QDir::toNativeSeparators(outDir);
-  } else if (attempt == 1) {
-    auto quote = [](QString s) { return "'" + s.replace("'", "''") + "'"; };
-    program = QDir(sys32).filePath("WindowsPowerShell/v1.0/powershell.exe");
-    args << "-NoProfile" << "-NonInteractive" << "-Command"
-         << "Expand-Archive -LiteralPath " +
-                quote(QDir::toNativeSeparators(zipPath)) +
-                " -DestinationPath " + quote(QDir::toNativeSeparators(outDir)) +
-                " -Force";
-  }
-#else
-  // unzip is not installed everywhere; Python's zipfile nearly always is
-  if (attempt == 0) {
-    program = "unzip";
-    args << "-q" << "-o" << zipPath << "-d" << outDir;
-  } else if (attempt == 1) {
-    program = "bsdtar";
-    args << "-xf" << zipPath << "-C" << outDir;
-  } else if (attempt == 2) {
-    program = "python3";
-    args << "-m" << "zipfile" << "-e" << zipPath << outDir;
-  }
-#endif
-  if (program.isEmpty()) {
-    fail(tr("Could not unpack the rclone archive (no tar.exe or PowerShell "
-            "found)."));
-    return;
-  }
-
-  emit status(tr("Unpacking…"));
+  // rclone selfupdate checks the SHA-256 sum and PGP signature using the
+  // signing key compiled into the existing rclone executable. --output
+  // stages the result without changing the currently installed binary.
+  emit status(tr("Downloading rclone %1 and checking its PGP signature…")
+                  .arg(version));
+  emit progress(0, 0);
   auto *p = new QProcess(this);
-  connect(p, &QProcess::errorOccurred, this, [=, this](QProcess::ProcessError e) {
-    if (e == QProcess::FailedToStart) {
-      p->deleteLater();
-      extract(version, zipPath, attempt + 1);
-    }
-  });
-  connect(p, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
-          [=, this](int code, QProcess::ExitStatus st) {
-            p->deleteLater();
-            if (code != 0 || st != QProcess::NormalExit) {
-              extract(version, zipPath, attempt + 1);
+  mSelfUpdateProcess = p;
+  p->setProcessEnvironment(childEnv);
+
+  connect(p, &QProcess::errorOccurred, this,
+          [this, p](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart ||
+                mSelfUpdateProcess != p) {
               return;
             }
-            finishInstall(version, outDir);
+            mSelfUpdateProcess = nullptr;
+            p->deleteLater();
+            fail(tr("Could not start rclone's signed updater."));
           });
-  p->start(program, args);
+  connect(p, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+          [this, p, version, stageDir, output, updaterExe](int exitCode,
+                                                QProcess::ExitStatus exitStatus) {
+            if (mSelfUpdateProcess != p) {
+              return;
+            }
+            mSelfUpdateProcess = nullptr;
+            const QString details =
+                QString::fromUtf8(p->readAllStandardError()).trimmed().left(400);
+            const QString standardOutput =
+                QString::fromUtf8(p->readAllStandardOutput()).trimmed();
+            p->deleteLater();
+            if (mCancelled) {
+              fail(QString());
+              return;
+            }
+            if (exitStatus != QProcess::NormalExit || exitCode != 0) {
+              fail(tr("Signed rclone update was rejected (exit %1): %2. "
+                      "The installed copy was not changed.")
+                       .arg(exitCode)
+                       .arg(details));
+              return;
+            }
+            if (!QFileInfo(output).isFile()) {
+              // rclone selfupdate exits successfully *without writing --output*
+              // when the selected version is already running.
+              const bool upToDate =
+                  (details + standardOutput).contains(
+                      "rclone is up to date", Qt::CaseInsensitive);
+              if (upToDate) {
+                if (QFileInfo(updaterExe).canonicalFilePath() ==
+                        QFileInfo(managedPath()).canonicalFilePath() &&
+                    QFileInfo(managedPath()).isExecutable()) {
+                  mBusy = false;
+                  mWorkDir.reset();
+                  emit status(tr("rclone %1 is already installed.").arg(version));
+                  emit installed(version, managedPath());
+                  return;
+                }
+                fail(tr("The selected rclone version is already present in "
+                        "another location. No managed copy was installed."));
+                return;
+              }
+              fail(tr("Signed updater did not produce the expected executable."));
+              return;
+            }
+            finishInstall(version, stageDir);
+          });
+
+  // No shell is used: arguments are passed directly to the rclone process.
+  p->start(updaterExe, {"selfupdate", "--stable", "--version", version,
+                        "--output", output});
 }
 
 void RcloneUpdater::finishInstall(const QString &version,
