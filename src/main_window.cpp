@@ -1062,7 +1062,7 @@ void MainWindow::updateRcloneStatus() {
   if (mSecurityRclone) {
     mSecurityRclone->setText(mRcloneVersion.isEmpty()
                                 ? tr("No rclone detected")
-                                : tr("Installed: rclone v%1\\nExecutable: %2")
+                                : tr("Installed: rclone v%1\nExecutable: %2")
                                       .arg(mRcloneVersion, QDir::toNativeSeparators(GetRclone())));
   }
   if (mRcloneVersion.isEmpty()) {
