@@ -8,6 +8,7 @@ set(SOURCES
   main_window.cpp main_window_shell.cpp main_window.h main_window.ui
   remote_widget.cpp remote_widget.h remote_widget.ui
   dual_pane_widget.cpp dual_pane_widget.h
+  local_browser_widget.cpp local_browser_widget.h
   transfer_dialog.cpp transfer_dialog.h transfer_dialog.ui
   export_dialog.cpp export_dialog.h export_dialog.ui
   progress_dialog.cpp progress_dialog.h progress_dialog.ui
