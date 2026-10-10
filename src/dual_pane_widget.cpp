@@ -1,6 +1,7 @@
 #include "dual_pane_widget.h"
 
 #include "icon_cache.h"
+#include "local_browser_widget.h"
 #include "remote_widget.h"
 #include "theme.h"
 #include "utils.h"
@@ -15,7 +16,7 @@ DualPaneWidget::DualPaneWidget(IconCache *icons, QWidget *parent)
   heading->setObjectName("PageTitle");
   layout->addWidget(heading);
 
-  auto *info = new QLabel(tr("Browse two locations side by side. Choose a remote in each pane. "
+  auto *info = new QLabel(tr("Browse local drives, NAS shares and cloud remotes side by side. "
                              "Copying is optional and never overwrites existing destination files."));
   info->setObjectName("PageSubtitle");
   info->setWordWrap(true);
@@ -23,8 +24,8 @@ DualPaneWidget::DualPaneWidget(IconCache *icons, QWidget *parent)
 
   mSplitter = new QSplitter(Qt::Horizontal, this);
   mSplitter->setChildrenCollapsible(false);
-  buildPane(mLeft, tr("SOURCE / LEFT"));
-  buildPane(mRight, tr("DESTINATION / RIGHT"));
+  buildPane(mLeft, tr("LEFT"), "left");
+  buildPane(mRight, tr("RIGHT"), "right");
   mSplitter->addWidget(mLeft.body);
   mSplitter->addWidget(mRight.body);
   mSplitter->setStretchFactor(0, 1);
@@ -50,7 +51,9 @@ DualPaneWidget::DualPaneWidget(IconCache *icons, QWidget *parent)
           [this]() { copyBetween(false); });
 }
 
-void DualPaneWidget::buildPane(Pane &pane, const QString &caption) {
+void DualPaneWidget::buildPane(Pane &pane, const QString &caption,
+                               const QString &key) {
+  pane.key = key;
   pane.body = new QWidget(this);
   pane.body->setObjectName("SplitPane");
   auto *vertical = new QVBoxLayout(pane.body);
@@ -63,60 +66,92 @@ void DualPaneWidget::buildPane(Pane &pane, const QString &caption) {
   head->addWidget(label);
   pane.chooser = new QComboBox(pane.body);
   pane.chooser->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-  pane.chooser->setAccessibleName(tr("Remote selection"));
+  pane.chooser->setAccessibleName(tr("Storage location"));
+  pane.chooser->setToolTip(tr("Select this PC, a local folder or an rclone remote"));
   head->addWidget(pane.chooser, 1);
   vertical->addLayout(head);
 
   pane.layout = new QVBoxLayout;
   pane.layout->setContentsMargins(0, 0, 0, 0);
   vertical->addLayout(pane.layout, 1);
+
   connect(pane.chooser, QOverload<int>::of(&QComboBox::currentIndexChanged),
-          this, [this, &pane](int) { showSelectedRemote(pane); });
+          this, [this, &pane](int) {
+    GetSettings()->setValue("FileManager/" + pane.key + "Location",
+                            pane.chooser->currentData(Qt::UserRole));
+    showSelectedRemote(pane);
+  });
 }
 
 void DualPaneWidget::setRemotes(const QList<QPair<QString, QString>> &remotes) {
   auto reset = [&](Pane &pane) {
-    const QString previous = pane.chooser->currentData(Qt::UserRole).toString();
-    QSignalBlocker blocked(pane.chooser);
+    const QString before = pane.chooser->currentData(Qt::UserRole).toString();
+    const QString remembered = GetSettings()
+                                   ->value("FileManager/" + pane.key + "Location")
+                                   .toString();
+    const QString wanted = before.isEmpty() ? remembered : before;
+    const QSignalBlocker blocked(pane.chooser);
     pane.chooser->clear();
-    pane.chooser->addItem(tr("Choose remote…"), QString());
-    for (const auto &r : remotes) {
-      pane.chooser->addItem(Theme::remoteIcon(r.second), r.first, r.first);
-      pane.chooser->setItemData(pane.chooser->count() - 1, r.second, Qt::UserRole + 1);
+    pane.chooser->addItem(tr("Choose a location…"), QString());
+    // A first-class local browser is available even without rclone remotes.
+    pane.chooser->addItem(Theme::icon("folder"),
+                          tr("This PC / local storage"), kLocalLocation);
+    for (const auto &remote : remotes) {
+      pane.chooser->addItem(Theme::remoteIcon(remote.second),
+                            remote.first, remote.first);
+      pane.chooser->setItemData(pane.chooser->count() - 1, remote.second,
+                                Qt::UserRole + 1);
     }
-    const int index = pane.chooser->findData(previous, Qt::UserRole);
+    int index = pane.chooser->findData(wanted, Qt::UserRole);
+    if (index <= 0 && wanted.isEmpty()) {
+      index = pane.key == "left" ? 1 : (remotes.isEmpty() ? 0 : 2);
+    }
     pane.chooser->setCurrentIndex(index < 0 ? 0 : index);
-    // Existing widget can remain if the same remote is still selected.
-    if (pane.browser && (index <= 0 || pane.browser->property("remoteName").toString() != previous)) {
-      delete pane.browser;
-      pane.browser = nullptr;
-    }
+    const QString after = pane.chooser->currentData(Qt::UserRole).toString();
+    const bool sameLocal = after == kLocalLocation && pane.localBrowser;
+    const bool sameRemote = !after.isEmpty() && after != kLocalLocation &&
+                            pane.browser &&
+                            pane.browser->property("remoteName").toString() == after;
+    if (!sameLocal && !sameRemote) showSelectedRemote(pane);
   };
   reset(mLeft);
   reset(mRight);
-  if (!mLeft.browser) showSelectedRemote(mLeft);
-  if (!mRight.browser) showSelectedRemote(mRight);
 }
 
 void DualPaneWidget::showSelectedRemote(Pane &pane) {
-  if (pane.browser) {
-    delete pane.browser;
-    pane.browser = nullptr;
-  }
-  // A container placeholder avoids additional rclone calls before selection.
+  // Qt removes widgets from their layouts when they are deleted. Clear all
+  // old content exactly once before switching between local and remote.
   while (QLayoutItem *item = pane.layout->takeAt(0)) {
-    if (item->widget()) delete item->widget();
+    delete item->widget();
     delete item;
   }
+  pane.browser = nullptr;
+  pane.localBrowser = nullptr;
+
   const QString remote = pane.chooser->currentData(Qt::UserRole).toString();
   if (remote.isEmpty()) {
-    auto *empty = new QLabel(tr("Select a remote above to browse its files."));
+    auto *empty = new QLabel(tr("Select local storage or a cloud remote above."));
     empty->setAlignment(Qt::AlignCenter);
     empty->setWordWrap(true);
     empty->setProperty("secondary", true);
     pane.layout->addWidget(empty, 1);
     return;
   }
+
+  if (remote == kLocalLocation) {
+    const QString saved = GetSettings()
+                              ->value("FileManager/" + pane.key + "LocalDirectory")
+                              .toString();
+    auto *local = new LocalBrowserWidget(saved, pane.body);
+    pane.localBrowser = local;
+    pane.layout->addWidget(local, 1);
+    connect(local, &LocalBrowserWidget::directoryChanged,
+            this, [key = pane.key](const QString &path) {
+      GetSettings()->setValue("FileManager/" + key + "LocalDirectory", path);
+    });
+    return;
+  }
+
   const QString type = pane.chooser->currentData(Qt::UserRole + 1).toString();
   auto *browser = new RemoteWidget(mIcons, remote, type == "local",
                                    type == "drive", pane.body);
@@ -124,7 +159,8 @@ void DualPaneWidget::showSelectedRemote(Pane &pane) {
   browser->setProperty("remoteName", remote);
   pane.browser = browser;
   pane.layout->addWidget(browser, 1);
-  connect(browser, &RemoteWidget::addTransfer, this, &DualPaneWidget::addTransfer);
+  connect(browser, &RemoteWidget::addTransfer, this,
+          &DualPaneWidget::addTransfer);
   connect(browser, &RemoteWidget::addMount, this, &DualPaneWidget::addMount);
   connect(browser, &RemoteWidget::addStream, this, &DualPaneWidget::addStream);
   connect(browser, &RemoteWidget::newTabRequested, this,
@@ -134,38 +170,84 @@ void DualPaneWidget::showSelectedRemote(Pane &pane) {
 }
 
 void DualPaneWidget::copyBetween(bool leftToRight) {
-  RemoteWidget *source = leftToRight ? mLeft.browser : mRight.browser;
-  RemoteWidget *target = leftToRight ? mRight.browser : mLeft.browser;
-  if (!source || !target) {
-    QMessageBox::information(this, tr("Select remotes"),
-                             tr("Choose a remote in both panes first."));
+  const Pane &source = leftToRight ? mLeft : mRight;
+  const Pane &target = leftToRight ? mRight : mLeft;
+  if ((!source.browser && !source.localBrowser) ||
+      (!target.browser && !target.localBrowser)) {
+    QMessageBox::information(this, tr("Choose storage locations"),
+                             tr("Choose a storage location in both panes first."));
     return;
   }
-  const QString src = source->selectedRemotePath();
-  const QString targetDir = target->currentRemoteFolder();
-  if (src.isEmpty() || targetDir.isEmpty()) {
-    QMessageBox::information(this, tr("Select a file or folder"),
-                             tr("Select a file or subfolder in the source pane."));
+
+  const QString src = source.localBrowser
+                          ? source.localBrowser->selectedPath()
+                          : source.browser->selectedRemotePath();
+  const QString name = source.localBrowser
+                           ? source.localBrowser->selectedName()
+                           : source.browser->selectedEntryName();
+  const bool folder = source.localBrowser
+                          ? source.localBrowser->selectedIsFolder()
+                          : source.browser->selectedEntryIsFolder();
+  const QString targetDirectory = target.localBrowser
+                                      ? target.localBrowser->currentDirectory()
+                                      : target.browser->currentRemoteFolder();
+
+  if (src.isEmpty() || name.isEmpty() || targetDirectory.isEmpty()) {
+    QMessageBox::information(
+        this, tr("Select a source"),
+        tr("Select a file or folder in the source pane. "
+           "The other pane's open folder is the destination."));
     return;
   }
-  const QString name = source->selectedEntryName();
-  if (name.isEmpty() || name == "." || name == "..") return;
-  const bool folder = source->selectedEntryIsFolder();
-  const QString dst = targetDir + (targetDir.endsWith('/') || targetDir.endsWith(':') ? "" : "/") + name;
-  if (src == dst || (folder && dst.startsWith(src + "/"))) {
-    QMessageBox::warning(this, tr("Invalid destination"),
-                         tr("A folder cannot be copied into itself or one of its subfolders."));
+  if (name == "." || name == "..") return;
+  const QString dst = target.localBrowser
+                          ? QDir::cleanPath(QDir(targetDirectory).filePath(name))
+                          : targetDirectory +
+                                (targetDirectory.endsWith('/') ||
+                                         targetDirectory.endsWith(':')
+                                     ? "" : "/") +
+                                name;
+
+  // Disallow recursive copies and self-copy. Canonical filesystem paths
+  // also reject symlink-based descendants of an existing local folder.
+  const auto cmp = source.localBrowser && target.localBrowser
+#ifdef Q_OS_WIN
+                       ? Qt::CaseInsensitive
+#else
+                       ? Qt::CaseSensitive
+#endif
+                       : Qt::CaseSensitive;
+  bool recursive = src.compare(dst, cmp) == 0 ||
+                   (folder && dst.startsWith(src + "/", cmp));
+  if (folder && source.localBrowser && target.localBrowser) {
+    const QString from = QFileInfo(src).canonicalFilePath();
+    const QString into = QFileInfo(targetDirectory).canonicalFilePath();
+    if (!from.isEmpty() && !into.isEmpty()) {
+      recursive |= into.compare(from, cmp) == 0 ||
+                   into.startsWith(from + "/", cmp);
+    }
+  }
+  if (recursive) {
+    QMessageBox::warning(
+        this, tr("Invalid destination"),
+        tr("A file or folder cannot be copied onto itself, and a folder "
+           "cannot be copied into one of its own subfolders."));
     return;
   }
-  // Only copy. Never sync, delete, move or overwrite existing files.
+
   const auto reply = QMessageBox::question(
-      this, tr("Confirm cloud copy"),
+      this, tr("Confirm copy"),
       tr("Copy %1?\n\nFrom: %2\nTo: %3\n\nExisting destination files "
-         "will not be overwritten.").arg(folder ? tr("folder") : tr("file"), src, dst),
+         "will not be overwritten.")
+          .arg(folder ? tr("folder") : tr("file"), src, dst),
       QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
   if (reply != QMessageBox::Yes) return;
 
-  const QStringList args = {folder ? "copy" : "copyto", src, dst,
-                            "--ignore-existing", "--progress", "--stats=1s"};
+  // A single transfer path works for local -> remote (upload), remote ->
+  // local (download), remote -> remote and local -> local. Never sync/move.
+  // --ignore-existing provides the non-overwrite default.
+  const QStringList args = {folder ? "copy" : "copyto",
+                            src, dst, "--ignore-existing",
+                            "--progress", "--stats=1s"};
   emit addTransfer(tr("Copy %1").arg(name), src, dst, args);
 }
