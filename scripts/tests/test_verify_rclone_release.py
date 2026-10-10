@@ -1,8 +1,10 @@
-"""Local signed-data test cases; do not contact release servers."""
-import hashlib
+"""Offline tests with a dedicated public key and a pre-signed fixture.
+
+These tests deliberately do NOT generate keys: the Windows Git GnuPG
+distribution may support signature verification but not local key creation.
+The private fixture key is never distributed or needed.
+"""
 import os
-import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,64 +13,49 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from verify_rclone_release import verify_release
 
+TEST_SIGNER = "A2C8667C62D81AD2BCC1FDE72DC39979F424D5AA"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
 
 class SignatureTests(unittest.TestCase):
     def setUp(self):
         self.gpg = os.getenv("GPG_BINARY", "gpg")
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(prefix="pgp-fixture-")
         self.addCleanup(self.temp.cleanup)
-        base = Path(self.temp.name)
-        self.home = base / "gpg"
-        self.home.mkdir()
-        self.zip = base / "rclone-v1.2.3-windows-amd64.zip"
+        root = Path(self.temp.name)
+        self.zip = root / "rclone-v1.2.3-windows-amd64.zip"
         self.zip.write_bytes(b"Safe unit test archive")
-        self.sums = base / "SHA256SUMS"
-        self.key = base / "test-public.asc"
-        self.args = [self.gpg, "--batch", "--no-tty", "--homedir", str(self.home),
-                     "--pinentry-mode", "loopback"]
-        self.run_gpg(["--passphrase", "", "--quick-generate-key",
-                      "Test signing key <test@example.invalid>", "ed25519", "sign", "0"])
-        listing = self.run_gpg(["--with-colons", "--list-keys"]).stdout.decode()
-        self.signer = next(line.split(":")[9] for line in listing.splitlines()
-                           if line.startswith("fpr:"))
-        self.key.write_bytes(self.run_gpg(["--armor", "--export", self.signer]).stdout)
-        self.sign(hashlib.sha256(self.zip.read_bytes()).hexdigest() + "  " + self.zip.name + "\n")
+        self.sums = root / "SHA256SUMS"
+        self.sums.write_bytes((FIXTURES / "SHA256SUMS.asc").read_bytes())
+        self.key = FIXTURES / "public.asc"
 
-    def run_gpg(self, args):
-        return subprocess.run(self.args + args, check=True, capture_output=True, timeout=40)
-
-    def sign(self, text):
-        path = self.sums.parent / "plaintext.txt"
-        path.write_text(text, encoding="utf-8")
-        self.run_gpg(["--yes", "--local-user", self.signer, "--armor",
-                      "--clearsign", "--output", str(self.sums), str(path)])
-
-    def check(self, allowed=None):
-        if allowed is None:
-            allowed = frozenset({self.signer})
-        return verify_release(self.zip, self.sums, self.key, self.gpg, allowed)
+    def verify(self, permitted=frozenset({TEST_SIGNER})):
+        return verify_release(self.zip, self.sums, self.key, self.gpg, permitted)
 
     def test_correct_signature_and_digest(self):
-        self.assertEqual(self.check()[0], self.signer)
+        signer, digest = self.verify()
+        self.assertEqual(signer, TEST_SIGNER)
+        self.assertEqual(digest, "c39ee68504638d2efc8b4cc121be33427985a334515bfdbbfea4f8653a8cb9ca")
 
     def test_changed_archive_rejected(self):
-        self.zip.write_bytes(b"Altered")
+        self.zip.write_bytes(b"Altered archive content")
         with self.assertRaisesRegex(ValueError, "checksum"):
-            self.check()
+            self.verify()
 
     def test_changed_signed_text_rejected(self):
         self.sums.write_bytes(self.sums.read_bytes().replace(b"rclone-v1.2.3", b"rclone-v9.9.9"))
         with self.assertRaisesRegex(ValueError, "PGP signature"):
-            self.check()
+            self.verify()
 
     def test_wrong_signing_identity_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unexpected signer"):
-            self.check(frozenset({"0" * 40}))
+            self.verify(frozenset({"0" * 40}))
 
     def test_missing_named_archive_rejected(self):
-        self.sign("a" * 64 + "  different.zip\n")
+        self.zip.rename(self.zip.with_name("different-archive.zip"))
+        self.zip = self.zip.with_name("different-archive.zip")
         with self.assertRaisesRegex(ValueError, "exactly one"):
-            self.check()
+            self.verify()
 
 
 if __name__ == "__main__":
