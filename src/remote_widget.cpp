@@ -1302,3 +1302,37 @@ QString RemoteWidget::currentRemoteFolder() const {
   return selected.isValid() ? mRemote + ":" + model->path(selected).path()
                             : mRemote + ":";
 }
+
+QList<QAbstractItemView *> RemoteWidget::dragViews() const {
+  QList<QAbstractItemView *> views = {ui.tree};
+  if (mGrid) views.append(mGrid);
+  return views;
+}
+
+bool RemoteWidget::dragEntryAt(const QAbstractItemView *view,
+                                const QPoint &viewportPos, QString *path,
+                                QString *name, bool *folder) const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  if (!view || !model) return false;
+  const QModelIndex item = view->indexAt(viewportPos).siblingAtColumn(0);
+  if (!item.isValid() || model->isTopLevel(item) || model->isLoading(item))
+    return false;
+  const QString entryName = model->data(item, Qt::DisplayRole).toString();
+  if (entryName.isEmpty() || entryName == "." || entryName == "..")
+    return false;
+  *path = mRemote + ":" + model->path(item).path();
+  *name = entryName;
+  *folder = model->isFolder(item);
+  return true;
+}
+
+QString RemoteWidget::dropFolderAt(const QAbstractItemView *view,
+                                    const QPoint &viewportPos) const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  if (!view || !model) return QString();
+  QModelIndex target = view->indexAt(viewportPos).siblingAtColumn(0);
+  if (!target.isValid()) return currentRemoteFolder();
+  if (!model->isFolder(target)) target = target.parent();
+  if (!target.isValid() || model->isTopLevel(target)) return mRemote + ":";
+  return mRemote + ":" + model->path(target).path();
+}
