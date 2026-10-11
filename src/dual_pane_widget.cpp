@@ -307,32 +307,46 @@ void DualPaneWidget::registerPaneViews(Pane &pane) {
     header->setSectionsMovable(false);
     header->setStretchLastSection(false);
     header->setMinimumSectionSize(65);
-    header->setSectionResizeMode(0, QHeaderView::Stretch);
+    header->setToolTip(tr("Drag any column boundary left or right to resize"));
 
-    const QString setting = QString("FileManager/%1%2ColumnWidths")
-                                .arg(pane.key, local ? "Local" : "Remote");
-    const QStringList widths = GetSettings()->value(setting).toStringList();
+    // Include Name (column 0): Stretch forced the first separator to stay
+    // anchored and prevented users from adjusting Name vs Size. Every
+    // section is now Interactive and can expand or shrink independently.
     const int columnCount = tree->model()->columnCount();
-    for (int column = 1; column < columnCount; ++column) {
+    for (int column = 0; column < columnCount; ++column)
       header->setSectionResizeMode(column, QHeaderView::Interactive);
-      int defaultWidth = 110;
+
+    // V2 includes the Name width. Migrate previous preferences for the
+    // remaining columns so existing personal layouts are retained.
+    const QString oldKey = QString("FileManager/%1%2ColumnWidths")
+                               .arg(pane.key, local ? "Local" : "Remote");
+    const QString setting = oldKey + "V2";
+    const QStringList widths = GetSettings()->value(setting).toStringList();
+    const QStringList previous = GetSettings()->value(oldKey).toStringList();
+
+    const QSignalBlocker block(header);
+    for (int column = 0; column < columnCount; ++column) {
+      int defaultWidth = column == 0 ? 270 : 110;
       if (column == typeColumn) defaultWidth = 140;
       else if ((local && column == 3) || (!local && column == 2))
         defaultWidth = 155; // Date / Modified
       else if (!local && column == 5) defaultWidth = 180;
       else if (!local && column == 4) defaultWidth = 90;
-      const int stored = widths.value(column - 1).toInt();
+
+      int stored = widths.value(column).toInt();
+      if ((stored < 65 || stored > 1800) && column > 0)
+        stored = previous.value(column - 1).toInt();
       header->resizeSection(column, stored >= 65 && stored <= 1800
                                         ? stored : defaultWidth);
     }
 
-    // Persist independently for left/right and local/cloud, avoiding the
-    // previous behavior of expanding "Type" after every folder refresh.
+    // Save all columns, including Name. Widths are independent per side and
+    // storage type; an ordinary folder refresh must never re-autosize them.
     connect(header, &QHeaderView::sectionResized, this,
             [this, tree, setting](int column, int, int) {
-      if (column <= 0 || !tree->model()) return;
+      if (column < 0 || !tree->model()) return;
       QStringList newWidths;
-      for (int c = 1; c < tree->model()->columnCount(); ++c)
+      for (int c = 0; c < tree->model()->columnCount(); ++c)
         newWidths.append(QString::number(tree->header()->sectionSize(c)));
       GetSettings()->setValue(setting, newWidths);
     });
