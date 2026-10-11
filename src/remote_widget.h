@@ -21,6 +21,12 @@ public:
   QString selectedEntryName() const;
   bool selectedEntryIsFolder() const;
   QString currentRemoteFolder() const;
+  QList<QAbstractItemView *> dragViews() const;
+  bool dragEntryAt(const QAbstractItemView *view,
+                   const QPoint &viewportPos, QString *path,
+                   QString *name, bool *folder) const;
+  QString dropFolderAt(const QAbstractItemView *view,
+                       const QPoint &viewportPos) const;
 
 signals:
   void addTransfer(const QString &message, const QString &source,
