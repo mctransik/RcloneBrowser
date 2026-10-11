@@ -94,7 +94,8 @@ DualPaneWidget::DualPaneWidget(IconCache *icons, QWidget *parent)
   layout->addLayout(titleRow);
 
   auto *info = new QLabel(tr("Browse local drives, NAS shares and cloud remotes side by side. "
-                             "Drag the center grip to adjust widths. Copying never overwrites existing files."));
+                             "Drag the center grip to resize, or drag a file to the other pane to copy. "
+                             "Copies require confirmation and never overwrite existing files."));
   info->setObjectName("PageSubtitle");
   info->setWordWrap(true);
   layout->addWidget(info);
@@ -249,6 +250,7 @@ void DualPaneWidget::showSelectedRemote(Pane &pane) {
     auto *local = new LocalBrowserWidget(saved, pane.body);
     pane.localBrowser = local;
     pane.layout->addWidget(local, 1);
+    registerPaneViews(pane);
     connect(local, &LocalBrowserWidget::directoryChanged,
             this, [key = pane.key](const QString &path) {
       GetSettings()->setValue("FileManager/" + key + "LocalDirectory", path);
@@ -263,6 +265,7 @@ void DualPaneWidget::showSelectedRemote(Pane &pane) {
   browser->setProperty("remoteName", remote);
   pane.browser = browser;
   pane.layout->addWidget(browser, 1);
+  registerPaneViews(pane);
   connect(browser, &RemoteWidget::addTransfer, this,
           &DualPaneWidget::addTransfer);
   connect(browser, &RemoteWidget::addMount, this, &DualPaneWidget::addMount);
@@ -271,6 +274,137 @@ void DualPaneWidget::showSelectedRemote(Pane &pane) {
           [this, remote, type]() { emit openInTab(remote, type); });
   connect(browser, &RemoteWidget::closeRequested, this,
           [&pane]() { pane.chooser->setCurrentIndex(0); });
+}
+
+void DualPaneWidget::registerPaneViews(Pane &pane) {
+  QList<QAbstractItemView *> views;
+  if (pane.localBrowser)
+    views.append(pane.localBrowser->fileView());
+  else if (pane.browser)
+    views = pane.browser->dragViews();
+  for (QAbstractItemView *view : views) {
+    if (!view) continue;
+    // Preserve the original Windows Explorer -> cloud drop handling. Our
+    // filter intercepts only a one-time internal application MIME type.
+    view->setAcceptDrops(true);
+    view->viewport()->setAcceptDrops(true);
+    view->viewport()->installEventFilter(this);
+    view->setToolTip(tr("Drag a file or folder to the other pane to copy"));
+  }
+}
+
+const DualPaneWidget::Pane *
+DualPaneWidget::paneForViewport(QObject *watched,
+                                QAbstractItemView **resolvedView) const {
+  const Pane *panes[] = {&mLeft, &mRight};
+  for (const Pane *pane : panes) {
+    QList<QAbstractItemView *> views;
+    if (pane->localBrowser)
+      views.append(pane->localBrowser->fileView());
+    else if (pane->browser)
+      views = pane->browser->dragViews();
+    for (QAbstractItemView *view : views) {
+      if (view && watched == view->viewport()) {
+        if (resolvedView) *resolvedView = view;
+        return pane;
+      }
+    }
+  }
+  return nullptr;
+}
+
+bool DualPaneWidget::eventFilter(QObject *watched, QEvent *event) {
+  static const QByteArray mimeType("application/x-cloud-control-pane-copy");
+  QAbstractItemView *view = nullptr;
+  const Pane *pane = paneForViewport(watched, &view);
+  if (!pane || !view) return QWidget::eventFilter(watched, event);
+
+  switch (event->type()) {
+  case QEvent::MouseButtonPress: {
+    auto *mouse = static_cast<QMouseEvent *>(event);
+    mPressedViewport.clear();
+    if (mouse->button() == Qt::LeftButton &&
+        view->indexAt(mouse->position().toPoint()).isValid()) {
+      mPressedViewport = view->viewport();
+      mPressedPoint = mouse->position().toPoint();
+    }
+    break;
+  }
+  case QEvent::MouseButtonRelease:
+    if (mPressedViewport == watched) mPressedViewport.clear();
+    break;
+  case QEvent::MouseMove: {
+    auto *mouse = static_cast<QMouseEvent *>(event);
+    if (mPressedViewport != watched ||
+        !(mouse->buttons() & Qt::LeftButton) ||
+        (mouse->position().toPoint() - mPressedPoint).manhattanLength() <
+            QApplication::startDragDistance())
+      break;
+
+    mPressedViewport.clear();
+    QString path;
+    QString name;
+    bool folder = false;
+    const bool valid = pane->localBrowser
+        ? pane->localBrowser->dragEntryAt(mPressedPoint, &path, &name, &folder)
+        : pane->browser->dragEntryAt(view, mPressedPoint, &path, &name, &folder);
+    if (!valid || path.isEmpty()) break;
+
+    mDraggedFrom = pane->key;
+    mDraggedPath = path;
+    mDraggedName = name;
+    mDraggedFolder = folder;
+    mDraggedFromLocal = pane->localBrowser != nullptr;
+    mDragToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    auto *mime = new QMimeData;
+    mime->setData(mimeType, mDragToken.toUtf8());
+    auto *drag = new QDrag(view);
+    drag->setMimeData(mime);
+    drag->exec(Qt::CopyAction, Qt::CopyAction);
+    drag->deleteLater();
+    mDragToken.clear();
+    mDraggedFrom.clear();
+    mDraggedPath.clear();
+    mDraggedName.clear();
+    return true;
+  }
+  case QEvent::DragEnter:
+  case QEvent::DragMove:
+  case QEvent::Drop: {
+    auto *drop = static_cast<QDropEvent *>(event);
+    if (mDragToken.isEmpty() || pane->key == mDraggedFrom ||
+        !drop->mimeData()->hasFormat(mimeType) ||
+        drop->mimeData()->data(mimeType) != mDragToken.toUtf8()) {
+      break;
+    }
+
+    drop->setDropAction(Qt::CopyAction);
+    drop->accept();
+    if (event->type() != QEvent::Drop) return true;
+
+    const QString destDirectory = pane->localBrowser
+        ? pane->localBrowser->dropFolderAt(drop->position().toPoint())
+        : pane->browser->dropFolderAt(view, drop->position().toPoint());
+    const QString src = mDraggedPath;
+    const QString name = mDraggedName;
+    const bool folder = mDraggedFolder;
+    const bool sourceIsLocal = mDraggedFromLocal;
+    const bool targetIsLocal = pane->localBrowser != nullptr;
+
+    // Finish the Qt drag event before opening the confirmation dialog.
+    QTimer::singleShot(0, this,
+                       [this, src, name, folder, sourceIsLocal, targetIsLocal,
+                        destDirectory]() {
+      copyWithConfirmation(src, name, folder, sourceIsLocal, targetIsLocal,
+                           destDirectory);
+    });
+    return true;
+  }
+  default:
+    break;
+  }
+
+  return QWidget::eventFilter(watched, event);
 }
 
 void DualPaneWidget::copyBetween(bool leftToRight) {
@@ -296,6 +430,13 @@ void DualPaneWidget::copyBetween(bool leftToRight) {
                                       ? target.localBrowser->currentDirectory()
                                       : target.browser->currentRemoteFolder();
 
+  copyWithConfirmation(src, name, folder, source.localBrowser != nullptr,
+                       target.localBrowser != nullptr, targetDirectory);
+}
+
+void DualPaneWidget::copyWithConfirmation(
+    const QString &src, const QString &name, bool folder,
+    bool sourceIsLocal, bool targetIsLocal, const QString &targetDirectory) {
   if (src.isEmpty() || name.isEmpty() || targetDirectory.isEmpty()) {
     QMessageBox::information(
         this, tr("Select a source"),
@@ -304,7 +445,7 @@ void DualPaneWidget::copyBetween(bool leftToRight) {
     return;
   }
   if (name == "." || name == "..") return;
-  const QString dst = target.localBrowser
+  const QString dst = targetIsLocal
                           ? QDir::cleanPath(QDir(targetDirectory).filePath(name))
                           : targetDirectory +
                                 (targetDirectory.endsWith('/') ||
@@ -314,7 +455,7 @@ void DualPaneWidget::copyBetween(bool leftToRight) {
 
   // Disallow recursive copies and self-copy. Canonical filesystem paths
   // also reject symlink-based descendants of an existing local folder.
-  const auto cmp = source.localBrowser && target.localBrowser
+  const auto cmp = sourceIsLocal && targetIsLocal
 #ifdef Q_OS_WIN
                        ? Qt::CaseInsensitive
 #else
@@ -323,7 +464,7 @@ void DualPaneWidget::copyBetween(bool leftToRight) {
                        : Qt::CaseSensitive;
   bool recursive = src.compare(dst, cmp) == 0 ||
                    (folder && dst.startsWith(src + "/", cmp));
-  if (folder && source.localBrowser && target.localBrowser) {
+  if (folder && sourceIsLocal && targetIsLocal) {
     const QString from = QFileInfo(src).canonicalFilePath();
     const QString into = QFileInfo(targetDirectory).canonicalFilePath();
     if (!from.isEmpty() && !into.isEmpty()) {
@@ -347,9 +488,8 @@ void DualPaneWidget::copyBetween(bool leftToRight) {
       QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
   if (reply != QMessageBox::Yes) return;
 
-  // A single transfer path works for local -> remote (upload), remote ->
-  // local (download), remote -> remote and local -> local. Never sync/move.
-  // --ignore-existing provides the non-overwrite default.
+  // All copy methods go through the same already-tested rclone job system.
+  // --ignore-existing prevents overwriting; never move, delete, or sync.
   const QStringList args = {folder ? "copy" : "copyto",
                             src, dst, "--ignore-existing",
                             "--progress", "--stats=1s"};
