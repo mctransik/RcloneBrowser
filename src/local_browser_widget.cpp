@@ -161,3 +161,24 @@ bool LocalBrowserWidget::selectedIsFolder() const {
   const QModelIndex current = mFiles->selectionModel()->currentIndex();
   return !selectedPath().isEmpty() && mModel->isDir(current);
 }
+
+bool LocalBrowserWidget::dragEntryAt(const QPoint &viewportPos,
+                                      QString *path, QString *name,
+                                      bool *folder) const {
+  const QModelIndex item = mFiles->indexAt(viewportPos);
+  if (!item.isValid()) return false;
+  const QString absolute = QDir::fromNativeSeparators(mModel->filePath(item));
+  const QFileInfo info(absolute);
+  if (!info.exists() || info.fileName().isEmpty()) return false;
+  *path = absolute;
+  *name = info.fileName();
+  *folder = mModel->isDir(item);
+  return true;
+}
+
+QString LocalBrowserWidget::dropFolderAt(const QPoint &viewportPos) const {
+  const QModelIndex hovered = mFiles->indexAt(viewportPos);
+  if (hovered.isValid() && mModel->isDir(hovered))
+    return QDir::fromNativeSeparators(mModel->filePath(hovered));
+  return mDirectory;
+}
