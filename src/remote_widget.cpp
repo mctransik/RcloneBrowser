@@ -55,6 +55,8 @@ QString root = isLocal ? "/" : QString();
   buildFluentUi(model, remote);
 
   QObject::connect(model, &QAbstractItemModel::layoutChanged, this, [=, this]() {
+    // The dual-pane file manager owns manual, persisted column widths.
+    if (ui.tree->property("fileManagerColumns").toBool()) return;
     ui.tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     for (int c = 1; c < model->columnCount(QModelIndex()); ++c) {
       ui.tree->resizeColumnToContents(c);
@@ -995,7 +997,7 @@ void RemoteWidget::buildFluentUi(ItemModel *model, const QString &remote) {
                          a->setChecked(!hdr->isSectionHidden(c));
                          QObject::connect(a, &QAction::toggled, this, [this, hdr, c](bool on) {
                            hdr->setSectionHidden(c, !on);
-                           if (on) {
+                           if (on && !ui.tree->property("fileManagerColumns").toBool()) {
                              ui.tree->resizeColumnToContents(c);
                            }
                            QStringList hiddenNow;
