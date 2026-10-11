@@ -15,6 +15,10 @@ public:
   QString selectedName() const;
   bool selectedIsFolder() const;
   QString currentDirectory() const { return mDirectory; }
+  QAbstractItemView *fileView() const { return mFiles; }
+  bool dragEntryAt(const QPoint &viewportPos, QString *path,
+                   QString *name, bool *folder) const;
+  QString dropFolderAt(const QPoint &viewportPos) const;
 
 signals:
   void directoryChanged(const QString &directory);
