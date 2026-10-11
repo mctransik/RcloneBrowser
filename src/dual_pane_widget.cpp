@@ -1,6 +1,7 @@
 #include "dual_pane_widget.h"
 
 #include "icon_cache.h"
+#include "file_manager_column_delegate.h"
 #include "local_browser_widget.h"
 #include "remote_widget.h"
 #include "theme.h"
@@ -290,6 +291,51 @@ void DualPaneWidget::registerPaneViews(Pane &pane) {
     view->viewport()->setAcceptDrops(true);
     view->viewport()->installEventFilter(this);
     view->setToolTip(tr("Drag a file or folder to the other pane to copy"));
+
+    // Only Details views have table columns. Leave the icon grid unchanged.
+    auto *tree = qobject_cast<QTreeView *>(view);
+    if (!tree) continue;
+
+    const bool local = pane.localBrowser != nullptr;
+    const int typeColumn = local ? 2 : 3;
+    tree->setProperty("fileManagerColumns", true);
+    tree->setItemDelegate(new FileManagerColumnDelegate(typeColumn, tree));
+    tree->setTextElideMode(Qt::ElideRight);
+    tree->setWordWrap(false);
+
+    QHeaderView *header = tree->header();
+    header->setSectionsMovable(false);
+    header->setStretchLastSection(false);
+    header->setMinimumSectionSize(65);
+    header->setSectionResizeMode(0, QHeaderView::Stretch);
+
+    const QString setting = QString("FileManager/%1%2ColumnWidths")
+                                .arg(pane.key, local ? "Local" : "Remote");
+    const QStringList widths = GetSettings()->value(setting).toStringList();
+    const int columnCount = tree->model()->columnCount();
+    for (int column = 1; column < columnCount; ++column) {
+      header->setSectionResizeMode(column, QHeaderView::Interactive);
+      int defaultWidth = 110;
+      if (column == typeColumn) defaultWidth = 140;
+      else if ((local && column == 3) || (!local && column == 2))
+        defaultWidth = 155; // Date / Modified
+      else if (!local && column == 5) defaultWidth = 180;
+      else if (!local && column == 4) defaultWidth = 90;
+      const int stored = widths.value(column - 1).toInt();
+      header->resizeSection(column, stored >= 65 && stored <= 1800
+                                        ? stored : defaultWidth);
+    }
+
+    // Persist independently for left/right and local/cloud, avoiding the
+    // previous behavior of expanding "Type" after every folder refresh.
+    connect(header, &QHeaderView::sectionResized, this,
+            [this, tree, setting](int column, int, int) {
+      if (column <= 0 || !tree->model()) return;
+      QStringList newWidths;
+      for (int c = 1; c < tree->model()->columnCount(); ++c)
+        newWidths.append(QString::number(tree->header()->sectionSize(c)));
+      GetSettings()->setValue(setting, newWidths);
+    });
   }
 }
 
