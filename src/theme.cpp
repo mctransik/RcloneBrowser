@@ -379,7 +379,8 @@ QTreeView::branch:has-children:closed { image: url(@imgRight); }
 QTreeView::branch:has-children:open { image: url(@imgDown); }
 QHeaderView { background: transparent; border: none; }
 QHeaderView::section {
-  background: transparent; color: @text2; border: none; border-bottom: 1px solid @divider;
+  background: transparent; color: @text2; border: none;
+  border-bottom: 1px solid @divider; border-right: 1px solid @divider;
   padding: 7px 8px;
 }
 QHeaderView::section:hover { background: @subtleHover; }
