@@ -6,6 +6,75 @@
 #include "theme.h"
 #include "utils.h"
 
+namespace {
+
+// A wider grip makes the existing splitter discoverable and easy to drag.
+// Painting from live theme colors also keeps it legible after theme switches.
+class FileManagerSplitterHandle final : public QSplitterHandle {
+public:
+  FileManagerSplitterHandle(Qt::Orientation orientation, QSplitter *parent)
+      : QSplitterHandle(orientation, parent) {
+    setToolTip(QObject::tr("Drag left or right to resize the file panes"));
+    setAccessibleName(QObject::tr("Resize file manager panes"));
+  }
+
+protected:
+  void enterEvent(QEnterEvent *event) override {
+    mHovered = true;
+    update();
+    QSplitterHandle::enterEvent(event);
+  }
+
+  void leaveEvent(QEvent *event) override {
+    mHovered = false;
+    update();
+    QSplitterHandle::leaveEvent(event);
+  }
+
+  void paintEvent(QPaintEvent *) override {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QRectF area(rect());
+    const QColor divider = Theme::color("divider");
+    const QColor accent = Theme::color("accentText");
+    const QColor neutral = Theme::color("text3");
+    const qreal x = area.center().x();
+
+    // A faint full-height central rule and three clear grab marks.
+    QPen linePen(divider, 1);
+    p.setPen(linePen);
+    p.drawLine(QPointF(x, 4), QPointF(x, height() - 4));
+    p.setPen(Qt::NoPen);
+    const QColor handleBg = mHovered ? Theme::color("navSel")
+                                     : Theme::color("layer");
+    p.setBrush(handleBg);
+    p.drawRoundedRect(QRectF(x - 5, height() / 2.0 - 29, 10, 58), 5, 5);
+
+    p.setBrush(mHovered ? accent : neutral);
+    for (int i = -1; i <= 1; ++i) {
+      p.drawRoundedRect(QRectF(x - 1, height() / 2.0 + i * 10 - 3,
+                               2, 6), 1, 1);
+    }
+  }
+
+private:
+  bool mHovered = false;
+};
+
+class FileManagerSplitter final : public QSplitter {
+public:
+  explicit FileManagerSplitter(QWidget *parent)
+      : QSplitter(Qt::Horizontal, parent) {}
+
+protected:
+  QSplitterHandle *createHandle() override {
+    return new FileManagerSplitterHandle(orientation(), this);
+  }
+};
+
+} // namespace
+
+
 DualPaneWidget::DualPaneWidget(IconCache *icons, QWidget *parent)
     : QWidget(parent), mIcons(icons) {
   auto *layout = new QVBoxLayout(this);
@@ -14,15 +83,26 @@ DualPaneWidget::DualPaneWidget(IconCache *icons, QWidget *parent)
 
   auto *heading = new QLabel(tr("File manager"));
   heading->setObjectName("PageTitle");
-  layout->addWidget(heading);
+  auto *titleRow = new QHBoxLayout;
+  titleRow->addWidget(heading);
+  titleRow->addStretch(1);
+  auto *equalPanes = new QToolButton(this);
+  equalPanes->setText(tr("50:50"));
+  equalPanes->setToolTip(tr("Make both file panes equally wide"));
+  equalPanes->setAccessibleName(tr("Reset file panes to equal widths"));
+  titleRow->addWidget(equalPanes);
+  layout->addLayout(titleRow);
 
   auto *info = new QLabel(tr("Browse local drives, NAS shares and cloud remotes side by side. "
-                             "Copying is optional and never overwrites existing destination files."));
+                             "Drag the center grip to adjust widths. Copying never overwrites existing files."));
   info->setObjectName("PageSubtitle");
   info->setWordWrap(true);
   layout->addWidget(info);
 
-  mSplitter = new QSplitter(Qt::Horizontal, this);
+  mSplitter = new FileManagerSplitter(this);
+  mSplitter->setObjectName("FileManagerSplitter");
+  mSplitter->setHandleWidth(14);
+  mSplitter->setOpaqueResize(true);
   mSplitter->setChildrenCollapsible(false);
   buildPane(mLeft, tr("LEFT"), "left");
   buildPane(mRight, tr("RIGHT"), "right");
@@ -30,6 +110,26 @@ DualPaneWidget::DualPaneWidget(IconCache *icons, QWidget *parent)
   mSplitter->addWidget(mRight.body);
   mSplitter->setStretchFactor(0, 1);
   mSplitter->setStretchFactor(1, 1);
+
+  // Keep the user's preferred pane widths between launches. QSplitter
+  // serializes its own sizes and orientation as a QByteArray.
+  const QByteArray saved =
+      GetSettings()->value("FileManager/SplitterState").toByteArray();
+  if (saved.isEmpty() || !mSplitter->restoreState(saved))
+    mSplitter->setSizes({500, 500});
+  connect(mSplitter, &QSplitter::splitterMoved, this,
+          [this](int, int) {
+            GetSettings()->setValue("FileManager/SplitterState",
+                                    mSplitter->saveState());
+          });
+  connect(equalPanes, &QToolButton::clicked, this, [this]() {
+    const int total = mSplitter->sizes().value(0) +
+                      mSplitter->sizes().value(1);
+    const int half = qMax(1, total / 2);
+    mSplitter->setSizes({half, half});
+    GetSettings()->setValue("FileManager/SplitterState",
+                            mSplitter->saveState());
+  });
   layout->addWidget(mSplitter, 1);
 
   auto *actions = new QHBoxLayout;
@@ -56,6 +156,10 @@ void DualPaneWidget::buildPane(Pane &pane, const QString &caption,
   pane.key = key;
   pane.body = new QWidget(this);
   pane.body->setObjectName("SplitPane");
+  // Allow a narrow secondary pane even when its internal browser has wide
+  // toolbar size hints; keep a minimum usable width for both panes.
+  pane.body->setMinimumWidth(220);
+  pane.body->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
   auto *vertical = new QVBoxLayout(pane.body);
   vertical->setContentsMargins(4, 4, 4, 4);
   vertical->setSpacing(6);
