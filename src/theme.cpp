@@ -20,10 +20,10 @@ QColor gAccentText; // accent used for text, indicators, focus
 // ------------------------------------------------------------ accent ----
 
 void computeAccent() {
-  // Brand accent: bright gold. Text/indicators use a darker amber on light
-  // backgrounds so they stay readable (WCAG AA contrast).
-  gAccentBtn = QColor("#F5B70A");
-  gAccentText = gDark ? QColor("#FBBF24") : QColor("#A15C07");
+  // Calm teal identity. Text/indicators use a darker teal on light
+  // backgrounds to keep accessible contrast.
+  gAccentBtn = QColor("#16A5AF");
+  gAccentText = gDark ? QColor("#65DCE0") : QColor("#087681");
 }
 
 // ------------------------------------------------------------- icons ----
@@ -150,20 +150,20 @@ QMap<QString, QString> buildTokens() {
                                   .arg(c.alpha());
   };
   const bool d = gDark;
-  const QColor card = d ? QColor("#151515") : QColor("#FFFFFF");
-  set("bg", d ? QColor("#0E0E0E") : QColor("#F3F1EC"));        // sidebar, window
-  set("layer", d ? QColor("#0A0A0A") : QColor("#FAF9F6"));     // content area
+  const QColor card = d ? QColor("#172838") : QColor("#FFFFFF");
+  set("bg", d ? QColor("#0E1926") : QColor("#F1F6F8"));        // sidebar, window
+  set("layer", d ? QColor("#101E2B") : QColor("#F8FBFC"));     // content area
   set("card", card);
-  set("cardHover", d ? QColor("#1C1C1C") : QColor("#FBF8F1"));
-  set("stroke", d ? QColor("#1F1F1F") : QColor("#E4DFD5"));
-  set("cardStroke", d ? QColor("#262626") : QColor("#E4DFD5"));
-  set("tile", d ? QColor("#1D1D1D") : QColor("#F5F2EB"));
-  set("headerBg", d ? QColor("#191919") : QColor("#F7F4EE"));
-  set("divider", d ? QColor("#232323") : QColor("#E7E2D8"));
+  set("cardHover", d ? QColor("#203347") : QColor("#EAF5F6"));
+  set("stroke", d ? QColor("#273C4C") : QColor("#DCE8EB"));
+  set("cardStroke", d ? QColor("#294357") : QColor("#DCE8EB"));
+  set("tile", d ? QColor("#203445") : QColor("#E8F0F3"));
+  set("headerBg", d ? QColor("#1E3345") : QColor("#EDF3F6"));
+  set("divider", d ? QColor("#2A3D4C") : QColor("#DEE9ED"));
   set("text", d ? QColor("#FFFFFF") : QColor("#141210"));
   set("text2", d ? QColor("#B5AFA8") : QColor("#57534E"));
   set("text3", d ? QColor("#78716C") : QColor("#A8A29E"));
-  set("ctrl", d ? QColor("#171717") : QColor("#FFFFFF"));
+  set("ctrl", d ? QColor("#182C3B") : QColor("#FFFFFF"));
   set("ctrlHover", d ? QColor("#1E1E1E") : QColor("#FBF9F5"));
   set("ctrlPressed", d ? QColor("#141414") : QColor("#F4F1EA"));
   set("ctrlDisabled", d ? QColor("#131313") : QColor("#F4F1EA"));
@@ -176,26 +176,26 @@ QMap<QString, QString> buildTokens() {
   set("flyout", d ? QColor("#161616") : QColor("#FFFFFF"));
   set("flyoutStroke", d ? QColor("#2A2A2A") : QColor("#DDD7CB"));
   set("scroll", d ? QColor(255, 255, 255, 90) : QColor(28, 25, 23, 100));
-  set("track", d ? QColor("#2A2A2A") : QColor("#E4DFD5"));
+  set("track", d ? QColor("#2A2A2A") : QColor("#DCE8EB"));
   set("accentBtn", gAccentBtn);
-  set("accentBtnHover", QColor("#FFC93C"));
-  set("accentBtnPressed", QColor("#E0A400"));
+  set("accentBtnHover", QColor("#2BC0CA"));
+  set("accentBtnPressed", QColor("#11838F"));
   set("accentText", gAccentText);
-  set("onAccent", QColor("#1A1405"));
-  set("sel", d ? QColor(245, 183, 10, 34) : QColor(245, 183, 10, 46));
-  set("selHover", d ? QColor(245, 183, 10, 46) : QColor(245, 183, 10, 60));
-  set("tabStrip", d ? QColor("#171717") : QColor("#E9E5DC"));
-  set("tabHover", d ? QColor("#1F1F1F") : QColor("#F1EEE7"));
-  set("navSel", d ? QColor("#2A2312") : QColor("#FBEFC9"));
+  set("onAccent", QColor("#062A32"));
+  set("sel", d ? QColor(22, 165, 175, 34) : QColor(22, 165, 175, 46));
+  set("selHover", d ? QColor(22, 165, 175, 46) : QColor(22, 165, 175, 60));
+  set("tabStrip", d ? QColor("#182C3B") : QColor("#E9E5DC"));
+  set("tabHover", d ? QColor("#273C4C") : QColor("#F1EEE7"));
+  set("navSel", d ? QColor("#103944") : QColor("#D8F2F3"));
   set("success", d ? QColor("#4ADE80") : QColor("#15803D"));
   set("critical", d ? QColor("#F87171") : QColor("#B91C1C"));
-  set("accentTint", d ? QColor(245, 183, 10, 38) : QColor(245, 183, 10, 40));
+  set("accentTint", d ? QColor(22, 165, 175, 38) : QColor(22, 165, 175, 40));
   set("successTint", d ? QColor(74, 222, 128, 30) : QColor(21, 128, 61, 22));
   set("criticalTint", d ? QColor(248, 113, 113, 32) : QColor(185, 28, 28, 20));
   set("checkStroke", d ? QColor("#57534E") : QColor("#A8A29E"));
 
   const QColor iconC = d ? QColor(255, 255, 255, 200) : QColor(0, 0, 0, 170);
-  t["imgCheck"] = iconFile("checkmark", QColor("#1A1405"), 14);
+  t["imgCheck"] = iconFile("checkmark", QColor("#062A32"), 14);
   t["imgRight"] = iconFile("chevron", iconC, 12);
   t["imgDown"] = iconFile("expand", iconC, 12);
   t["imgUp"] = iconFile("collapse", iconC, 12);
@@ -379,7 +379,8 @@ QTreeView::branch:has-children:closed { image: url(@imgRight); }
 QTreeView::branch:has-children:open { image: url(@imgDown); }
 QHeaderView { background: transparent; border: none; }
 QHeaderView::section {
-  background: transparent; color: @text2; border: none; border-bottom: 1px solid @divider;
+  background: transparent; color: @text2; border: none;
+  border-bottom: 1px solid @divider; border-right: 1px solid @divider;
   padding: 7px 8px;
 }
 QHeaderView::section:hover { background: @subtleHover; }
@@ -523,7 +524,7 @@ void styleNativeWindow(QWidget *w) {
   } else {
     // Title bar in the window background colour (Windows 11 22000+):
     // 35 = DWMWA_CAPTION_COLOR, 36 = DWMWA_TEXT_COLOR
-    QColor bg = gDark ? QColor("#0E0E0E") : QColor("#F3F1EC");
+    QColor bg = gDark ? QColor("#0E1926") : QColor("#F1F6F8");
     QColor fg = gDark ? QColor("#F5F3EE") : QColor("#1C1917");
     COLORREF cap = RGB(bg.red(), bg.green(), bg.blue());
     COLORREF txt = RGB(fg.red(), fg.green(), fg.blue());

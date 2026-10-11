@@ -1054,6 +1054,17 @@ void MainWindow::updateRcloneStatus() {
   if (!mRcloneStatus) {
     return;
   }
+  if (mDashboardRclone) {
+    mDashboardRclone->setText(mRcloneVersion.isEmpty()
+                                 ? tr("Not detected")
+                                 : tr("rclone v%1").arg(mRcloneVersion));
+  }
+  if (mSecurityRclone) {
+    mSecurityRclone->setText(mRcloneVersion.isEmpty()
+                                ? tr("No rclone detected")
+                                : tr("Installed: rclone v%1\nExecutable: %2")
+                                      .arg(mRcloneVersion, QDir::toNativeSeparators(GetRclone())));
+  }
   if (mRcloneVersion.isEmpty()) {
     mRcloneStatus->setText(
         tr("rclone not found — <a href=\"download\">download</a>"));
