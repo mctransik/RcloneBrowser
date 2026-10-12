@@ -358,7 +358,7 @@ void MainWindow::buildShell() {
     it->setData(TargetRole, id);
     it->setData(FilledIconRole, Theme::icon(icon + "_filled"));
   };
-  addAction("github", tr("GitHub"), "github");
+  addAction("github", tr("Project on GitHub"), "github");
   addAction("settings", tr("Settings"), "settings");
   addAction("update", tr("Update & About"), "help");
   footer->setFixedHeight(3 * 42 + 4);
@@ -383,7 +383,7 @@ void MainWindow::buildShell() {
                        ui.preferences->trigger();
                      } else if (id == "github") {
                        QDesktopServices::openUrl(
-                           QUrl("https://github.com/Jackpison/RcloneBrowser"));
+                           QUrl("https://github.com/mctransik/RcloneBrowser"));
                      } else {
                        helpMenu->exec(footer->viewport()->mapToGlobal(r.topRight()));
                      }
