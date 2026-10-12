@@ -1,5 +1,3 @@
-<p align="center"><img src="docs/logo.png" width="96" alt="Rclone Browser logo"></p>
-
 <h1 align="center">Rclone Browser – Security RC1 for Windows and Linux</h1>
 
 > **Independent fork, not the official upstream project.** This repository is maintained under [mctransik/RcloneBrowser](https://github.com/mctransik/RcloneBrowser) and is based on [Jackpison's Rclone Explorer](https://github.com/Jackpison/RcloneExplorer) (formerly Rclone Browser), with earlier contributors credited below. It is not affiliated with or endorsed by the upstream maintainers. The original MIT copyright notices are retained.
@@ -12,7 +10,7 @@
 
 <p align="center"><b><a href="https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1">Download this RC1 test release</a></b> · <a href="https://github.com/mctransik/RcloneBrowser/tree/main">Our project overview</a> · <a href="docs/Rclone-Browser-Guide.pdf">Legacy user guide (PDF)</a> · <a href="docs/remote-icons.md">Remote icons</a> · <a href="CHANGELOG.md">Changelog</a></p>
 
-![Browsing a remote with tabs in dark mode](docs/browser.png)
+**Screenshots and visual identity:** This README deliberately does not reproduce inherited upstream GUI screenshots or its logo. The published RC1 executable still uses the earlier Rclone Browser interface. Our independently developed cloud-management interface is a work in progress on the [development branch](https://github.com/mctransik/RcloneBrowser/tree/feature/cloud-control-ui-mvp); no replacement product screenshots have been approved yet.
 
 ## Features
 
@@ -29,12 +27,6 @@ Rclone Browser gives rclone a full graphical interface, so you can manage cloud 
 - Breadcrumb address bar, filter the current folder (Ctrl+F)
 - Mount remotes as drives and stream media to a player such as [VLC](https://www.videolan.org/)
 - **Built-in rclone updater**: rclone is bundled and kept up to date, every download checksum-verified
-
-![Remotes on the Home page](docs/home.png)
-
-![A running transfer](docs/transfers-dark.png)
-
-![Details view in light mode](docs/details-light.png)
 
 ## Getting started
 
