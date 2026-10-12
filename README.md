@@ -1,10 +1,16 @@
 <p align="center"><img src="docs/logo.png" width="96" alt="Rclone Browser logo"></p>
 
-<h1 align="center">Rclone Browser – rclone GUI for Windows and Linux</h1>
+<h1 align="center">Rclone Browser – Security RC1 for Windows and Linux</h1>
 
-<p align="center">A modern rclone GUI: browse, transfer and sync files on all your cloud storage, powered by <a href="https://rclone.org/">rclone</a>.<br>Portable, nothing to install: unzip or run it from anywhere, even a USB stick.</p>
+> **Independent fork, not the official upstream project.** This repository is maintained under [mctransik/RcloneBrowser](https://github.com/mctransik/RcloneBrowser) and is based on [Jackpison's Rclone Explorer](https://github.com/Jackpison/RcloneExplorer) (formerly Rclone Browser), with earlier contributors credited below. It is not affiliated with or endorsed by the upstream maintainers. The original MIT copyright notices are retained.
+>
+> **Security RC1 — evaluation only.** This branch documents the earlier Rclone Browser interface and the [v4.0.2-rc.1 prerelease](https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1). It does **not** contain our new dashboard or two-pane cloud-management prototype. Test in a separate folder with disposable data; **do not use it for production files or backups**. The published release tag and download artifacts remain unchanged.
+>
+> **New project direction:** See the [main-branch project overview](https://github.com/mctransik/RcloneBrowser/tree/main) and [separate development branch](https://github.com/mctransik/RcloneBrowser/tree/feature/cloud-control-ui-mvp). Our future product name has **not** been selected.
 
-<p align="center"><b><a href="../../releases/latest">Download the latest release</a></b> · <a href="https://jackpison.github.io/RcloneBrowser/">Website</a> · <a href="docs/Rclone-Browser-Guide.pdf">User guide (PDF)</a> · <a href="docs/remote-icons.md">Remote icons</a> · <a href="CHANGELOG.md">Changelog</a></p>
+<p align="center">This earlier rclone GUI can browse, transfer and sync files on supported cloud storage, powered by <a href="https://rclone.org/">rclone</a>.<br>Portable on Windows and available as an AppImage on Linux.</p>
+
+<p align="center"><b><a href="https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1">Download this RC1 test release</a></b> · <a href="https://github.com/mctransik/RcloneBrowser/tree/main">Our project overview</a> · <a href="docs/Rclone-Browser-Guide.pdf">Legacy user guide (PDF)</a> · <a href="docs/remote-icons.md">Remote icons</a> · <a href="CHANGELOG.md">Changelog</a></p>
 
 ![Browsing a remote with tabs in dark mode](docs/browser.png)
 
@@ -34,15 +40,15 @@ Rclone Browser gives rclone a full graphical interface, so you can manage cloud 
 
 ### Windows 10 / 11
 
-1. Download `RcloneBrowser-<version>-windows-x64.zip` from the [latest release](../../releases/latest).
-2. Extract it to any folder and run `RcloneBrowser.exe`.
-3. Windows may show "Windows protected your PC" because the app is not code-signed: click **More info**, then **Run anyway**.
+1. For evaluation only, see `RcloneBrowser-4.0.2-windows-x64.zip` in the [v4.0.2-rc.1 prerelease](https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1). The release includes `SHA256SUMS.txt` for integrity checks.
+2. Extract into a separate test folder and run `RcloneBrowser.exe` **only if your local security checks allow it**.
+3. The executable is **not Authenticode-signed**. If Windows, Firefox or antivirus software warns about possible malware, **do not bypass or disable protections**; stop and investigate the warning first. A matching SHA-256 hash alone does not establish that an executable is safe.
 
 Mounting remotes as drive letters needs [WinFsp](https://winfsp.dev/).
 
 ### Linux (x86_64)
 
-1. Download `RcloneBrowser-<version>-linux-x86_64.AppImage` from the [latest release](../../releases/latest).
+1. For evaluation only, see `RcloneBrowser-4.0.2-linux-x86_64.AppImage` in the [v4.0.2-rc.1 prerelease](https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1).
 2. Make it executable: `chmod +x RcloneBrowser-*.AppImage` (or *Properties → Allow executing as program*).
 3. Run it.
 
@@ -78,17 +84,16 @@ Your existing rclone remotes appear automatically on both systems. If you have n
 | F5 · F7 · F2 · Del | Refresh · New folder · Rename · Delete |
 | Ctrl+U / Ctrl+D | Upload / Download |
 
-## Security
+## Security and evaluation status
 
-- Cloud credentials stay in rclone's own configuration; the app never stores them. A config password is kept only in memory and passed to rclone via an environment variable.
-- rclone updates are HTTPS-only, verified against rclone's SHA-256 checksums, size-limited and test-run before installation.
-- rclone and media players are started without a shell, so file names cannot inject commands.
-- The Windows build enables Control Flow Guard, CET shadow-stack compatibility, ASLR and DEP.
-- Releases are built by GitHub Actions from this repository with every action and build tool pinned to an exact version and checksum; each release publishes SHA-256 checksums. Both packages are launched in a self-test before publishing.
+- The RC1 release notes describe verification of rclone updates against **PGP-signed SHA-256 checksums**, including checks of the trusted release signing key. See the [RC1 release notes](https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1) for details.
+- rclone remote credentials are managed through rclone's configuration. Treat `rclone.conf`, log files and diagnostic output as potentially sensitive; **do not publish secrets**.
+- The RC1 artifacts were built through GitHub Actions and the release includes a `SHA256SUMS.txt` file. The release notes also state that build provenance attestations were published.
+- **This is an unsigned evaluation prerelease, not a production-certified or malware-scanned application.** Hash checks, CI test results and provenance are useful integrity evidence but are not substitutes for independent security review or malware analysis.
 
 ## Feedback
 
-Feedback and bug reports are welcome! Please [open an issue](../../issues) and include the output from *Show Output* on the transfer card if something fails.
+GitHub Issues are **not currently enabled** in this fork. We will document a feedback channel when one is available. Do not publicly share cloud credentials, private configuration files or unredacted transfer logs.
 
 ## Building from source
 
@@ -110,8 +115,10 @@ cmake --build build
 ./build/build/rclone-browser
 ```
 
-The user guide is generated with `python docs/guide/build_guide.py` (needs `pip install reportlab`). The website lives in `site/` and is published to GitHub Pages by `.github/workflows/pages.yml`.
+The legacy user guide is generated with `python docs/guide/build_guide.py` (needs `pip install reportlab`). The `site/` directory contains **inherited upstream website material** and is not the official website of this independent fork; old upstream URLs and branding must not be reused as this project's identity.
 
-## Credits
+## Credits and license
 
-Based on Rclone Browser by [mmozeiko](https://github.com/mmozeiko/RcloneBrowser), [DinCahill](https://github.com/DinCahill/RcloneBrowser) and [kapitainsky](https://github.com/kapitainsky/RcloneBrowser). Interface icons from [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) by Microsoft (MIT). Licensed under the MIT license.
+This independent development fork is based on [Jackpison / Rclone Explorer](https://github.com/Jackpison/RcloneExplorer) and the earlier [mmozeiko](https://github.com/mmozeiko/RcloneBrowser), [DinCahill](https://github.com/DinCahill/RcloneBrowser) and [kapitainsky](https://github.com/kapitainsky/RcloneBrowser) Rclone Browser projects. Interface icons include assets from [Microsoft Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) under their own license terms.
+
+The inherited source-code license is [MIT](LICENSE); original copyright and permission notices must remain intact. This RC1 branch is **not** the new independently branded cloud-management application.
