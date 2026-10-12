@@ -16,6 +16,20 @@ LocalBrowserWidget::LocalBrowserWidget(const QString &initialDirectory,
   toolbar->addWidget(localLabel);
   toolbar->addStretch();
 
+  mBack = new QToolButton(this);
+  mBack->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+  mBack->setToolTip(tr("Back to previous folder (Alt+Left)"));
+  mBack->setAccessibleName(tr("Back to previous local folder"));
+  mBack->setEnabled(false);
+  toolbar->addWidget(mBack);
+
+  mForward = new QToolButton(this);
+  mForward->setIcon(style()->standardIcon(QStyle::SP_ArrowForward));
+  mForward->setToolTip(tr("Forward to next folder (Alt+Right)"));
+  mForward->setAccessibleName(tr("Forward to next local folder"));
+  mForward->setEnabled(false);
+  toolbar->addWidget(mForward);
+
   mUp = new QToolButton(this);
   mUp->setIcon(Theme::icon("up"));
   mUp->setToolTip(tr("Parent folder (Alt+Up)"));
@@ -76,6 +90,21 @@ LocalBrowserWidget::LocalBrowserWidget(const QString &initialDirectory,
     mFiles->header()->setSectionResizeMode(i, QHeaderView::ResizeToContents);
   v->addWidget(mFiles, 1);
 
+  connect(mBack, &QToolButton::clicked, this,
+          [this]() { navigateHistory(-1); });
+  connect(mForward, &QToolButton::clicked, this,
+          [this]() { navigateHistory(1); });
+
+  // Each local pane has its own history. Limit keyboard shortcuts to the
+  // focused pane; two local panes must never compete for Alt+Left/Right.
+  auto *backShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_Left), this);
+  backShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  connect(backShortcut, &QShortcut::activated, mBack, &QToolButton::click);
+
+  auto *forwardShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_Right), this);
+  forwardShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  connect(forwardShortcut, &QShortcut::activated, mForward, &QToolButton::click);
+
   connect(mUp, &QToolButton::clicked, this, [this]() {
     const QDir dir(mDirectory);
     const QString parent = QDir::cleanPath(dir.absoluteFilePath(".."));
@@ -110,14 +139,32 @@ void LocalBrowserWidget::browseDirectory() {
   if (!path.isEmpty()) goToDirectory(path);
 }
 
-void LocalBrowserWidget::goToDirectory(const QString &directory) {
+void LocalBrowserWidget::navigateHistory(int step) {
+  const int next = mHistoryIndex + step;
+  if (next < 0 || next >= mHistory.size()) return;
+  // A disconnected NAS share may no longer exist. Do not advance history
+  // unless navigation has actually succeeded.
+  if (goToDirectory(mHistory.at(next), false)) {
+    mHistoryIndex = next;
+    updateHistoryButtons();
+  }
+}
+
+void LocalBrowserWidget::updateHistoryButtons() {
+  mBack->setEnabled(mHistoryIndex > 0);
+  mForward->setEnabled(mHistoryIndex >= 0 &&
+                       mHistoryIndex + 1 < mHistory.size());
+}
+
+bool LocalBrowserWidget::goToDirectory(const QString &directory,
+                                       bool recordHistory) {
   const QString path = QDir::cleanPath(QDir::fromNativeSeparators(directory.trimmed()));
   const QFileInfo location(path);
   if (!location.exists() || !location.isDir()) {
     QMessageBox::warning(this, tr("Folder not available"),
                          tr("This folder is not available:\n%1").arg(directory));
     mPath->setText(QDir::toNativeSeparators(mDirectory));
-    return;
+    return false;
   }
   mDirectory = QDir::fromNativeSeparators(location.absoluteFilePath());
   const QModelIndex root = mModel->setRootPath(mDirectory);
@@ -141,7 +188,21 @@ void LocalBrowserWidget::goToDirectory(const QString &directory) {
   Q_UNUSED(rootPath);
   const QSignalBlocker block(mDrives);
   mDrives->setCurrentIndex(driveIndex);
+
+  if (recordHistory) {
+    // Navigating after Back drops the old forward branch, as in Explorer.
+    // Reopening the current folder is not a new navigation step.
+    if (mHistoryIndex < 0 ||
+        mHistory.value(mHistoryIndex) != mDirectory) {
+      mHistory = mHistory.mid(0, mHistoryIndex + 1);
+      mHistory.append(mDirectory);
+      if (mHistory.size() > 50) mHistory.removeFirst();
+      mHistoryIndex = mHistory.size() - 1;
+    }
+    updateHistoryButtons();
+  }
   emit directoryChanged(mDirectory);
+  return true;
 }
 
 QString LocalBrowserWidget::selectedPath() const {
