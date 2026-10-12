@@ -29,8 +29,16 @@ private:
   QComboBox *mDrives = nullptr;
   QLineEdit *mPath = nullptr;
   QToolButton *mUp = nullptr;
+  QToolButton *mBack = nullptr;
+  QToolButton *mForward = nullptr;
   QString mDirectory;
+  QStringList mHistory;
+  int mHistoryIndex = -1;
 
-  void goToDirectory(const QString &directory);
+  // Directory changes from path input, folder browsing and double-clicks
+  // add history. Back/Forward reuse an entry without creating duplicates.
+  bool goToDirectory(const QString &directory, bool recordHistory = true);
+  void navigateHistory(int step);
+  void updateHistoryButtons();
   void browseDirectory();
 };
