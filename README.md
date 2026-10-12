@@ -1,116 +1,115 @@
-<h1 align="center">Rclone Browser – Security RC1 for Windows and Linux</h1>
+# Rclone Browser 4.0.2 — Security Release Candidate
 
-> **Independent fork, not the official upstream project.** This repository is maintained under [mctransik/RcloneBrowser](https://github.com/mctransik/RcloneBrowser) and is based on [Jackpison's Rclone Explorer](https://github.com/Jackpison/RcloneExplorer) (formerly Rclone Browser), with earlier contributors credited below. It is not affiliated with or endorsed by the upstream maintainers. The original MIT copyright notices are retained.
+**An independent, experimental fork of the rclone desktop GUI for Windows and Linux.**
+
+> **RC1 is for evaluation only.** The [v4.0.2-rc.1 prerelease](https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1) is a security-focused test build. It has not been approved for production use. Try it in a separate directory, preferably with test remotes and disposable files. **Do not rely on it for important data or backups.**
 >
-> **Security RC1 — evaluation only.** This branch documents the earlier Rclone Browser interface and the [v4.0.2-rc.1 prerelease](https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1). It does **not** contain our new dashboard or two-pane cloud-management prototype. Test in a separate folder with disposable data; **do not use it for production files or backups**. The published release tag and download artifacts remain unchanged.
->
-> **New project direction:** See the [main-branch project overview](https://github.com/mctransik/RcloneBrowser/tree/main) and [separate development branch](https://github.com/mctransik/RcloneBrowser/tree/feature/cloud-control-ui-mvp). Our future product name has **not** been selected.
+> **Project independence and attribution:** This repository, [mctransik/RcloneBrowser](https://github.com/mctransik/RcloneBrowser), is an independent development fork of [Jackpison's Rclone Explorer](https://github.com/Jackpison/RcloneExplorer) (formerly Rclone Browser). It is not the official upstream project and is not endorsed by its maintainers. The software includes inherited code and other contributions acknowledged under [Credits and licensing](#credits-and-licensing).
 
-<p align="center">This earlier rclone GUI can browse, transfer and sync files on supported cloud storage, powered by <a href="https://rclone.org/">rclone</a>.<br>Portable on Windows and available as an AppImage on Linux.</p>
+## Why this release candidate exists
 
-<p align="center"><b><a href="https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1">Download this RC1 test release</a></b> · <a href="https://github.com/mctransik/RcloneBrowser/tree/main">Our project overview</a> · <a href="docs/Rclone-Browser-Guide.pdf">Legacy user guide (PDF)</a> · <a href="docs/remote-icons.md">Remote icons</a> · <a href="CHANGELOG.md">Changelog</a></p>
+The purpose of this branch is to preserve an identifiable test version of the **earlier Rclone Browser application**, including work on verifying rclone downloads and tightening the build and update process. It is not a preview of our redesigned desktop interface.
 
-**Screenshots and visual identity:** This README deliberately does not reproduce inherited upstream GUI screenshots or its logo. The published RC1 executable still uses the earlier Rclone Browser interface. Our independently developed cloud-management interface is a work in progress on the [development branch](https://github.com/mctransik/RcloneBrowser/tree/feature/cloud-control-ui-mvp); no replacement product screenshots have been approved yet.
+The project is moving toward a broader cloud-management application with storage overviews, two-pane file operations, transfer management and a security page. That **separate, unfinished development** is documented in the [project overview on `main`](https://github.com/mctransik/RcloneBrowser/tree/main) and developed on [`feature/cloud-control-ui-mvp`](https://github.com/mctransik/RcloneBrowser/tree/feature/cloud-control-ui-mvp). The future product name has not been chosen.
 
-## Features
+We deliberately do not use inherited screenshots or artwork in this README to advertise the new project. **The RC1 application itself still shows the inherited Rclone Browser user interface.**
 
-Rclone Browser gives rclone a full graphical interface, so you can manage cloud files without the command line:
+## What RC1 can do
 
-- **Modern design** in black and gold or warm light, with a one-click **light / dark** switch next to the app name
-- **All your clouds in one place**: Google Drive, OneDrive, Dropbox, pCloud, S3, SFTP, encrypted remotes and every other rclone storage type, using your existing rclone configuration. Logos for 34 popular services are included; you can [add your own](docs/remote-icons.md).
-- **File Explorer–style tabs**: open several remotes, or the same remote several times (Ctrl+T)
-- **Icons and Details views**: extra large to small icons (Ctrl + mouse wheel), or a sortable list with name, size, modified date, type, extension and path
-- Upload, download, create folders, rename, move and delete; drag and drop files from your file manager to upload
-- **Transfers you can pause and resume**, with live progress, speed and time left
-- Saved **tasks**: store a transfer once, run it again with one click (or as a dry run)
-- Sidebar remotes sortable by name, type or your own order (drag and drop)
-- Breadcrumb address bar, filter the current folder (Ctrl+F)
-- Mount remotes as drives and stream media to a player such as [VLC](https://www.videolan.org/)
-- **Built-in rclone updater**: rclone is bundled and kept up to date, every download checksum-verified
+This test version provides a graphical front end for [rclone](https://rclone.org/). The existing application supports these workflows:
 
-## Getting started
+| Area | Capabilities in this older application |
+| --- | --- |
+| Remote access | Display configured rclone remotes and navigate their folders |
+| File operations | Upload, download and manage files and folders through the existing browser |
+| Browsing | Work with multiple tabs and switch between file-list views |
+| Transfers | Inspect transfer activity and use the application's existing task features |
+| Remote configuration | Add or manage rclone remotes through the provided integration |
+| Mounting | Use rclone's mount functionality when the required system components are installed |
 
-### Windows 10 / 11
+Support for individual cloud services and operations depends on the selected rclone backend. Encrypted remotes depend on your own rclone configuration.
 
-1. For evaluation only, see `RcloneBrowser-4.0.2-windows-x64.zip` in the [v4.0.2-rc.1 prerelease](https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1). The release includes `SHA256SUMS.txt` for integrity checks.
-2. Extract into a separate test folder and run `RcloneBrowser.exe` **only if your local security checks allow it**.
-3. The executable is **not Authenticode-signed**. If Windows, Firefox or antivirus software warns about possible malware, **do not bypass or disable protections**; stop and investigate the warning first. A matching SHA-256 hash alone does not establish that an executable is safe.
+**Not included here:** our new dashboard, two-pane file manager, redesigned storage overview or new security-center interface. Those belong to the separate development work and must not be mistaken for RC1 features.
 
-Mounting remotes as drive letters needs [WinFsp](https://winfsp.dev/).
+## What's being evaluated
 
-### Linux (x86_64)
+Version **4.0.2** concentrates on the trustworthiness of rclone updates and release packaging. The [changelog](CHANGELOG.md) and [RC1 release notes](https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1) describe, among other items:
 
-1. For evaluation only, see `RcloneBrowser-4.0.2-linux-x86_64.AppImage` in the [v4.0.2-rc.1 prerelease](https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1).
-2. Make it executable: `chmod +x RcloneBrowser-*.AppImage` (or *Properties → Allow executing as program*).
-3. Run it.
+- Checking downloaded rclone archives against the upstream **PGP-signed checksum list**, including the expected signing-key identity.
+- Rejecting failed signature, checksum and signer-verification cases in automated tests.
+- Handling an already-current rclone version and passing proxy settings to the update process.
+- Using verification during Windows and Linux release packaging, with GitHub Actions building and testing the packages.
+- Publishing a checksum list with the release archives and configuring provenance attestations for tagged builds.
 
-Works on most distributions (Ubuntu, Fedora, Debian, Mint, Arch, openSUSE…). If it does not start, install FUSE 2 (`sudo apt install libfuse2t64` on Ubuntu 24.04+, `libfuse2` on older releases) or run it with `--appimage-extract-and-run`. Mounting needs FUSE 3 (`fuse3`).
+These are descriptions of the implemented/tested mechanisms, **not** a claim that the complete application has undergone a comprehensive security audit.
 
-Your existing rclone remotes appear automatically on both systems. If you have none yet, click **New remote** on the Home page (or **+** next to *Remotes* in the sidebar) to set one up with rclone's assistant. The **[user guide](docs/Rclone-Browser-Guide.pdf)** explains every feature in detail.
+## Test packages
 
-## Where things are stored
+The published **[v4.0.2-rc.1](https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1)** release contains:
 
-**Windows (portable):** `RcloneBrowser.ini` next to the exe switches portable mode on, and everything stays in the app folder:
+| Platform | Published file |
+| --- | --- |
+| Windows 10/11, x64 | `RcloneBrowser-4.0.2-windows-x64.zip` |
+| Linux, x86_64 | `RcloneBrowser-4.0.2-linux-x86_64.AppImage` |
+| Integrity information | `SHA256SUMS.txt` |
 
-| What | Where |
-|---|---|
-| rclone | `rclone\rclone.exe` (updated from inside the app) |
-| rclone configuration | `%APPDATA%\rclone\rclone.conf` by default; copy it to `rclone\rclone.conf` to take your remotes with you |
-| Settings / saved tasks | `RcloneBrowser.ini` / `tasks.bin` |
-| Remote logos | `icons\remotes\<type>.png` (see [remote-icons.md](docs/remote-icons.md)) |
-| Documentation | `docs\` |
-| Qt plugins | `qt\plugins` (located via `qt.conf`) |
+Read the release notes before testing. The provided SHA-256 hashes can help check whether a download matches the published archive; they do **not** establish that the program is harmless or independently reviewed.
 
-**Linux:** settings in `~/.config/rclone-browser/`, the rclone updated by the app in `~/.local/share/rclone-browser/rclone-browser/`, your rclone configuration in its usual place (`~/.config/rclone/rclone.conf`). To make the AppImage portable, create a folder named like the AppImage plus `.config` next to it (for example `RcloneBrowser-4.0.0-linux-x86_64.AppImage.config`); settings and an updated rclone then stay beside the AppImage. Your own remote logos go in `~/.local/share/rclone-browser/rclone-browser/icons/remotes/` (or `icons/remotes/` next to the AppImage in portable mode).
+### Windows evaluation
 
-## Keyboard shortcuts
+Use a separate folder rather than overwriting an existing installation. The portable application executable is named `RcloneBrowser.exe`. A `RcloneBrowser.ini` file beside it enables the existing portable-settings mode.
 
-| Shortcut | Action |
-|---|---|
-| Ctrl+T / Ctrl+W | New tab / close tab (or middle-click the tab) |
-| Ctrl+F | Filter the current folder |
-| Ctrl+Shift+1 / Ctrl+Shift+2 | Icons view / Details view |
-| Ctrl + mouse wheel | Bigger / smaller icons |
-| Enter, double-click | Open folder |
-| Alt+Up | Parent folder |
-| F5 · F7 · F2 · Del | Refresh · New folder · Rename · Delete |
-| Ctrl+U / Ctrl+D | Upload / Download |
+**The executable is not Authenticode-signed.** If Firefox, Windows or security software reports a possible malware threat, do **not** bypass the protection or disable the scanner. Stop and investigate the warning. An unsigned executable is not automatically malicious, but neither a successful build nor a matching checksum guarantees safety.
 
-## Security and evaluation status
+Mounting remotes as Windows drive letters may require [WinFsp](https://winfsp.dev/).
 
-- The RC1 release notes describe verification of rclone updates against **PGP-signed SHA-256 checksums**, including checks of the trusted release signing key. See the [RC1 release notes](https://github.com/mctransik/RcloneBrowser/releases/tag/v4.0.2-rc.1) for details.
-- rclone remote credentials are managed through rclone's configuration. Treat `rclone.conf`, log files and diagnostic output as potentially sensitive; **do not publish secrets**.
-- The RC1 artifacts were built through GitHub Actions and the release includes a `SHA256SUMS.txt` file. The release notes also state that build provenance attestations were published.
-- **This is an unsigned evaluation prerelease, not a production-certified or malware-scanned application.** Hash checks, CI test results and provenance are useful integrity evidence but are not substitutes for independent security review or malware analysis.
+### Linux evaluation
 
-## Feedback
+The release provides an AppImage for x86_64. On supported distributions it can be marked executable and launched without a traditional installation. Depending on the distribution, AppImage execution may require compatible FUSE support. Mount operations have additional system requirements.
 
-GitHub Issues are **not currently enabled** in this fork. We will document a feedback channel when one is available. Do not publicly share cloud credentials, private configuration files or unredacted transfer logs.
+On either platform, **avoid pointing an experimental build at irreplaceable data**.
 
-## Building from source
+## Existing settings and sensitive data
 
-Every push is built by GitHub Actions (`.github/workflows/update.yml`) for Windows and Linux; pushing a tag such as `v4.0.0` publishes a release with both packages.
+RC1 retains the inherited application identifiers and configuration behavior. No product-name or settings-directory migration has taken place in this branch.
 
-**Windows:** Visual Studio 2022 or newer (C++ desktop development), CMake 3.21+, Ninja and Qt 6.10+ for MSVC 64-bit (including Qt SVG). From a *x64 Native Tools Command Prompt*:
+- rclone remote definitions are read from the rclone configuration selected by your setup; its standard locations and any portable overrides depend on your environment.
+- On Windows, the shipped portable layout uses `RcloneBrowser.ini` for application settings, and the existing application supports saved tasks.
+- On Linux, legacy application data uses the `rclone-browser` directory naming.
+- `rclone.conf` can contain sensitive information. Keep it, any crypt passwords, and diagnostic logs private. Back up your original configuration before experimenting.
 
-```
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=C:\Qt\6.10.3\msvc2022_64
-cmake --build build
-ctest --test-dir build
-```
+Do not copy settings blindly between test and production installations.
 
-**Linux:** a C++20 compiler, CMake, Ninja and Qt 6.10+ (Qt SVG included), e.g. on Ubuntu `sudo apt install build-essential cmake ninja-build qt6-base-dev qt6-svg-dev`:
+## Building and testing the source
 
-```
+The repository uses C++20, CMake and Qt, with the CI build using **Qt 6**. For Windows, use Visual Studio's MSVC C++ tools, Ninja, CMake and a compatible Qt 6 kit (including the SVG module). Linux builds require the corresponding Qt development components and a C++20-capable toolchain.
+
+A basic local build uses:
+
+```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/build/rclone-browser
+ctest --test-dir build --output-on-failure
 ```
 
-The legacy user guide is generated with `python docs/guide/build_guide.py` (needs `pip install reportlab`). The `site/` directory contains **inherited upstream website material** and is not the official website of this independent fork; old upstream URLs and branding must not be reused as this project's identity.
+Configure your Qt toolchain or `CMAKE_PREFIX_PATH` as needed. A successful source build or test run does not constitute an independent security assessment.
 
-## Credits and license
+The [GitHub Actions workflow](.github/workflows/update.yml) contains the Windows and Linux build, packaging and release steps. The [changelog](CHANGELOG.md) records the changes in the RC1 source.
 
-This independent development fork is based on [Jackpison / Rclone Explorer](https://github.com/Jackpison/RcloneExplorer) and the earlier [mmozeiko](https://github.com/mmozeiko/RcloneBrowser), [DinCahill](https://github.com/DinCahill/RcloneBrowser) and [kapitainsky](https://github.com/kapitainsky/RcloneBrowser) Rclone Browser projects. Interface icons include assets from [Microsoft Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) under their own license terms.
+## Project status and feedback
 
-The inherited source-code license is [MIT](LICENSE); original copyright and permission notices must remain intact. This RC1 branch is **not** the new independently branded cloud-management application.
+The intended successor to this legacy interface is **still in development**. The stable baseline, the development work and this RC1 serve different purposes; changes are not silently merged between them.
+
+GitHub Issues are currently **disabled** on this repository. There is no documented project-specific issue tracker yet. Never post credentials, `rclone.conf`, or raw logs containing private information in public discussions.
+
+**About old materials:** Other files in this branch, including historic guides, source-level About dialogs and website assets, may still carry upstream Rclone Browser or Rclone Explorer wording. They are retained as part of the historical codebase and are **not** claims that our project is the official upstream release.
+
+## Credits and licensing
+
+This fork builds on the work of [Jackpison / Rclone Explorer](https://github.com/Jackpison/RcloneExplorer) and earlier Rclone Browser contributors, including [kapitainsky](https://github.com/kapitainsky/RcloneBrowser), [Martins Mozeiko](https://github.com/mmozeiko/RcloneBrowser) and [DinCahill](https://github.com/DinCahill/RcloneBrowser). The program uses [rclone](https://rclone.org/) as its file-transfer engine. Some interface resources derive from [Microsoft Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons).
+
+The inherited repository [LICENSE](LICENSE) contains the MIT terms and historical copyright notices. Those notices are deliberately preserved. Bundled libraries, icons, service logos and other third-party components may have additional licensing or trademark requirements that must be evaluated independently.
+
+---
+
+**Documentation scope:** This README describes the `release-candidate/4.0.2-rc1` branch. Updating this branch's README does **not** rewrite the already-published `v4.0.2-rc.1` Git tag, the previously built archives or the README embedded in those archives.
