@@ -163,12 +163,21 @@ MainWindow::MainWindow() {
     box.setTextFormat(Qt::RichText);
     box.setText(QString(
         R"(<h3>Rclone Browser )" RCLONE_BROWSER_VERSION "</h3>"
-        R"(<p>Browse, transfer and sync your cloud storage with rclone.</p>)"
-        R"(<p>Copyright &copy; 2026 <a href="https://github.com/Jackpison">Jackpison</a></p>)"
-        R"(<p>Development and maintenance<br /><a href="https://github.com/Jackpison/RcloneBrowser">github.com/Jackpison/RcloneBrowser</a></p>)"
-        R"(<p>Based on the original version by<br /><a href="https://github.com/mmozeiko/RcloneBrowser">Martins Mozeiko</a></p>)"
-        R"(<p>Released under the MIT License.</p>)"
-        R"(<p><b>Feedback and bug reports are welcome!</b><br /><a href="https://github.com/Jackpison/RcloneBrowser/issues">Open an issue on GitHub</a></p>)"));
+        R"(<p><b>Independent cloud-management development fork.</b> This application is)"
+        R"( based on the Rclone Browser codebase and is not an official upstream release.)"
+        R"( Its final product name has not been selected yet.</p>)"
+        R"(<p><b>Current project:</b><br /><a href="https://github.com/mctransik/RcloneBrowser">)"
+        R"(github.com/mctransik/RcloneBrowser</a></p>)"
+        R"(<p><b>Upstream credits:</b><br />)"
+        R"(<a href="https://github.com/Jackpison/RcloneExplorer">Jackpison / Rclone Explorer</a>, )"
+        R"(<a href="https://github.com/kapitainsky/RcloneBrowser">kapitainsky</a>, )"
+        R"(<a href="https://github.com/mmozeiko/RcloneBrowser">Martins Mozeiko</a> and )"
+        R"(<a href="https://github.com/DinCahill/RcloneBrowser">DinCahill</a>.</p>)"
+        R"(<p>MIT-licensed inherited source code. Original copyright and permission)"
+        R"( notices are preserved in the repository LICENSE. Third-party assets)"
+        R"( may have separate terms.</p>)"
+        R"(<p><b>Development status:</b> Experimental features are still being tested.)"
+        R"( GitHub Issues are currently disabled for this fork.</p>)"));
     box.exec();
   });
   QObject::connect(ui.aboutQt, &QAction::triggered, qApp,
