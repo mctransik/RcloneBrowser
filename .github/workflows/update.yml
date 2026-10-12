@@ -26,21 +26,20 @@ jobs:
         with:
           persist-credentials: false
 
-      # aqtinstall (used to install Qt) needs compression libraries that may not
-      # have packages for the very newest Python yet, so pin a known-good one.
+      # Use Python 3.14 to avoid aqtinstall's Python < 3.14 archive
+      # misidentification (BadZipFile) seen in older versions.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install Qt
-        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
+        uses: jurplel/install-qt-action/action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1, direct Node action (avoids broken $/action composite)
         with:
           # Exact version for reproducible builds. 6.10.3 is the newest Qt the
           # installer (aqtinstall 3.3) can read; 6.11+ metadata is not
           # supported by it yet.
           version: "6.10.3"
           arch: win64_msvc2022_64
-          setup-python: false
           cache: true
 
       - name: Configure, build and test
@@ -152,16 +151,15 @@ jobs:
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install Qt
-        uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1
+        uses: jurplel/install-qt-action/action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4.4.1, direct Node action (avoids broken $/action composite)
         with:
           version: "6.10.3"
           host: linux
           target: desktop
           arch: linux_gcc_64
-          setup-python: false
           cache: true
 
       - name: Build dependencies
@@ -257,6 +255,12 @@ jobs:
         run: |
           set -euo pipefail
           ver=$(head -1 VERSION | tr -d '[:space:]')
+          # A tagged release must target the intended version. Do not publish
+          # another version accidentally or on a malformed tag.
+          if [[ "$GITHUB_REF_NAME" != "v${ver}" &&
+                "$GITHUB_REF_NAME" != "v${ver}-rc.1" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match VERSION=$ver"; exit 1
+          fi
           echo "VERSION=$ver" >> "$GITHUB_ENV"
           (cd dist && sha256sum *.zip *.AppImage > SHA256SUMS.txt && cat SHA256SUMS.txt)
           python3 - "$ver" <<'PY'
@@ -266,6 +270,7 @@ jobs:
           m = re.search(r"(?ms)^## \[" + re.escape(ver) + r"\][^\n]*\n(.*?)(?=^## |\Z)", log)
           notes = m.group(1).strip() if m else "See CHANGELOG.md for details."
           notes += (
+              "\n\n**Security RC1: Evaluation only. Test with a separate copy; do not use for production cloud data or backups.**\n\n"
               "\n\n---\n**Downloads**\n\n"
               f"- **Windows 10/11:** `RcloneBrowser-{ver}-windows-x64.zip`, extract anywhere and run `RcloneBrowser.exe`.\n"
               f"- **Linux (x86_64):** `RcloneBrowser-{ver}-linux-x86_64.AppImage`, make it executable (`chmod +x`) and run it.\n\n"
@@ -284,7 +289,8 @@ jobs:
 
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          name: Rclone Browser ${{ env.VERSION }}
+          name: Rclone Browser ${{ github.ref_name }} — security test build
+          prerelease: ${{ contains(github.ref_name, '-rc.') }}
           body_path: dist/release-notes.md
           files: |
             dist/*.zip
