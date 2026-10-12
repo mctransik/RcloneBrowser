@@ -27,6 +27,22 @@ Mozilla documents different categories for malware findings and uncommon softwar
 
 **Gate:** No recommendation to bypass Firefox, Windows SmartScreen, antivirus products or quarantine; no production-ready release while this is unresolved.
 
+### Additional screenshot evidence — received 2026-10-12
+
+The user shared a Firefox download-history screenshot (kept in the conversation; **not uploaded to this public repository**). It shows multiple downloads named `RcloneBrowser-4.0.2-windows-x64.zip`:
+
+- Two entries labeled **"Diese Datei enthält einen Virus oder Malware"** under **"Gestern"** (relative to 2026-10-12), with an origin shown as `productionresults…blob.core.windows.net`.
+- Additional entries from similar `productionresults…blob.core.windows.net` hosts at **0 bytes**. The screenshot alone does **not** identify why those attempts resulted in 0 bytes.
+- An older entry around **43.1 MB** from that storage domain and two entries around **43.2 MB** from `release-assets.githubusercontent.com`, without that explicit warning displayed next to them.
+- GitHub's own runner network documentation lists `*.blob.core.windows.net` for Actions workflow artifact transfer, and `release-assets.githubusercontent.com` for published release assets: https://docs.github.com/en/actions/reference/runners/github-hosted-runners .
+- Mozilla's documentation explicitly distinguishes the **virus/malware** download warning from the **uncommon download** warning: https://support.mozilla.org/en-US/kb/where-find-and-manage-downloaded-files-firefox .
+
+GitHub Actions workflow run artifacts created on 2026-10-11, including run IDs `38149605396` and `38145485000`, each include a Windows artifact named `RcloneBrowser-4.0.2-windows-x64` with GitHub-reported size **approximately 43.08 MiB**. Other successful runs on the same day produced similarly named/sized artifacts. **This is a temporal and size correlation only; the screenshot does not uniquely link either blocked download to a particular run ID, commit SHA or archive digest.**
+
+**Current interpretation:** The suspicious downloads appear consistent with GitHub-hosted Actions artifacts rather than a random third-party site. However, the origin's being a legitimate GitHub storage endpoint does **not** establish that its payload was benign. Likewise, a successfully downloaded release asset is not automatically safe, and different builds with the same filename must not be assumed byte-for-byte identical.
+
+**Next evidence needed:** If available without restoring or bypassing blocked content, capture the corresponding GitHub Actions run URL or artifact ID from browser/history context, any specific scanner detection name or ID, and the SHA-256 of an *already safely available, non-quarantined* archive. Do **not** make copies of credentials, temporary download URLs carrying query tokens or private paths public.
+
 ## Blocker 2 — Build inputs and source-to-binary traceability
 
 The workflow at [`.github/workflows/update.yml`](../.github/workflows/update.yml) downloads the **then-current** rclone release from `downloads.rclone.org/version.txt` independently in the Windows and Linux jobs, albeit with upstream PGP signature verification. Consequently two builds of the same source commit at different times can include different versions of rclone. That is not a signature bypass, but makes artifact comparison and reconstruction harder.
