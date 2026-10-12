@@ -33,7 +33,8 @@ LocalBrowserWidget::LocalBrowserWidget(const QString &initialDirectory,
   mUp = new QToolButton(this);
   mUp->setIcon(Theme::icon("up"));
   mUp->setToolTip(tr("Parent folder (Alt+Up)"));
-  mUp->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Up));
+  // The shortcut is scoped below to the focused local pane, so two
+  // local views can coexist without ambiguous window-wide shortcuts.
   toolbar->addWidget(mUp);
 
   auto *choose = new QToolButton(this);
@@ -104,6 +105,10 @@ LocalBrowserWidget::LocalBrowserWidget(const QString &initialDirectory,
   auto *forwardShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_Right), this);
   forwardShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   connect(forwardShortcut, &QShortcut::activated, mForward, &QToolButton::click);
+
+  auto *upShortcut = new QShortcut(QKeySequence(Qt::ALT | Qt::Key_Up), this);
+  upShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  connect(upShortcut, &QShortcut::activated, mUp, &QToolButton::click);
 
   connect(mUp, &QToolButton::clicked, this, [this]() {
     const QDir dir(mDirectory);
