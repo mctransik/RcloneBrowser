@@ -54,6 +54,7 @@ We are documenting the prerequisites for a possible future application, without 
 - [Third-party component review](docs/THIRD_PARTY_REVIEW.md): inherited attribution, dependencies, license checks and remaining release tasks.
 - [Project identity and migration audit](docs/PROJECT_IDENTITY_AUDIT.md): inherited names and publisher metadata, Linux/Windows packaging, configuration migration and decisions to make before rebranding.
 - [File-manager smoke-test checklist](docs/FILE_MANAGER_TEST_PLAN.md): focused local Back/Forward navigation, transfers and identity regression checks; results are still pending.
+- [Security review and release gates](docs/SECURITY_REVIEW_2026-10-12.md): verified build evidence, unresolved Firefox malware warning, supply-chain issues and required checks before any release.
 
 Eligibility for SignPath (particularly the upstream fork rules and public project reputation) is **not confirmed**. The final publisher name, verified contact, release policy and source/binary audits remain open.
 
