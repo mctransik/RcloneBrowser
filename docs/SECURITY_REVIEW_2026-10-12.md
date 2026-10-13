@@ -2,6 +2,8 @@
 
 > **Status: open review, not certification.** This note records observable evidence and specific remaining tasks for the independent cloud-management prototype on `feature/cloud-control-ui-mvp`. No complete source audit, binary malware scan, penetration test, or independent verification of the distributed executables has taken place. **Do not treat this as permission to override security-software warnings or use the prototype with production data.**
 
+**Static package inspection update (2026-10-13):** See [Windows artifact comparison](WINDOWS_ARTIFACT_STATIC_AUDIT_2026-10-13.md). Three public Actions archives (10–12 October) were examined without execution. All contained 67 entries; only the app executable and README differed, while the bundled rclone and all 24 DLLs were byte-identical. The user’s exact blocked download is still unidentified and its malware classification unresolved. This is not a scanner verdict.
+
 ## Reviewed scope and evidence
 
 - Development revision reviewed: `4cd546d625c5f1a2ece3168c43f0ee4f34908262`.
