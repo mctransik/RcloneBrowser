@@ -86,3 +86,18 @@ These are **review targets**, not confirmed vulnerabilities:
 **Public production release authorization: not granted.**
 
 This file documents review findings and open gates only. It does not change executable behavior.
+
+## Build pinning implemented on development branch — 2026-10-13
+
+**Code committed, CI validation pending.** The development workflow now fixes bundled rclone to **v1.75.2** for Windows and Linux. The selected official upstream release was published on 2026-10-09 as a security update. The exact archive ZIP SHA-256 values independently match the upstream GitHub release assets and the successful 2026-10-12 build logs:
+
+- Windows `rclone-v1.75.2-windows-amd64.zip`: `8a9db2bad1dc79a65b3348fd857069598e2aab7cf4d118b77b1df23055aff818`
+- Linux `rclone-v1.75.2-linux-amd64.zip`: `349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702`
+
+The workflow **retains the existing PGP signer + signed SHA256SUMS verification** and additionally refuses archives that differ from the approved platform hash. Changes to rclone require deliberate version and checksum review, rather than dynamically using `version.txt` at build time.
+
+The Windows ZIP now aims to include `docs/BUILD_PROVENANCE.txt` (source checkout commit, GitHub run ID/attempt, exact rclone archive/version/hash and Qt version) and `docs/PACKAGE_SHA256SUMS.txt` (per-file payload hashes; the manifest itself is excluded). The Linux AppImage aims to include `usr/share/rclone-browser/BUILD_PROVENANCE.txt`. These are self-reported **traceability records, not cryptographic attestations or malware clearance**. Cross-platform CI still needs to run successfully on this new revision; the actual resulting archives must be inspected to confirm both records are included and correct.
+
+The development-branch `release` job has been **disabled unconditionally** while the Firefox malware investigation is open. This protects only workflow versions containing the change: `main`, historical tags, and prior releases are **not altered**. Do not create new release tags while the old main-branch workflow still permits automatic publication. Before enabling any release path, complete the security review, require explicit human approval, and audit the release workflow and repository rules.
+
+**Still outstanding:** Exact Firefox-blocked sample identification, independent malware verdict, third-party SBOM/license review, other pinned build inputs, runtime credential and filesystem tests, approved code signing, and human release approval.
