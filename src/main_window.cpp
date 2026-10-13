@@ -9,6 +9,7 @@
 #include "list_of_job_options.h"
 #include "mount_widget.h"
 #include "preferences_dialog.h"
+#include "credential_safety.h"
 #include "remote_widget.h"
 #include "stream_widget.h"
 #include "transfer_dialog.h"
@@ -708,13 +709,13 @@ void MainWindow::rcloneListRemotes() {
 
 bool MainWindow::getConfigPassword(QProcess *p) {
   QString output = p->readAllStandardError().trimmed();
-  if (output.contains("RCLONE_CONFIG_PASS")) {
+  if (CredentialSafety::requiresConfigPassword(output)) {
     bool ok;
     QString password = QInputDialog::getText(
         this, qApp->applicationDisplayName(),
         "Enter password for .rclone.conf configuration file:",
         QLineEdit::Password, QString(), &ok);
-    if (ok) {
+    if (ok && !password.isEmpty()) {
       SetRclonePassword(password);
       return true;
     }

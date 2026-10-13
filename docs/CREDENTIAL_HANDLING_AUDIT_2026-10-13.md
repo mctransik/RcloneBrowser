@@ -15,7 +15,7 @@
 
 ## Changes on this branch
 
-- Corrected encrypted-config error detection at string index zero, allowing the GUI to prompt reliably when the hint begins the error output.
+- Corrected encrypted-config error detection at string index zero, allowing the GUI to prompt reliably when the hint begins the error output. An empty submitted password is not accepted for this encrypted-config prompt. The detection logic is isolated in `src/credential_safety.h` and has focused Qt tests for an index-zero hint, a later-position hint and unrelated errors. CI validation of the new tests is pending.
 - Added a Cancel-default security confirmation before copying complete, unredacted rclone commands to the system clipboard. This does not prevent intentional copying, and clipboard contents may remain after quitting.
 
 ## Recommended remediation order
