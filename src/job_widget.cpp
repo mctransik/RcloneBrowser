@@ -57,8 +57,20 @@ JobWidget::JobWidget(QProcess *process, const QString &info,
       Theme::icon("copy"));
 
   QObject::connect(ui.copy, &QToolButton::clicked, this, [=, this]() {
-    QClipboard *clipboard = QGuiApplication::clipboard();
-    clipboard->setText(mArgs.join(" "));
+    // Saved tasks can supply extra rclone flags (including secret-bearing
+    // options). Never silently place an unredacted command on the clipboard.
+    // This is a user-consent guard, NOT redaction or a secret scanner.
+    const auto answer = QMessageBox::warning(
+        this, tr("Copy rclone command"),
+        tr("This command may include access tokens, passwords, remote names "
+           "and private file paths. Copying it to the system clipboard can "
+           "expose those values to other applications.\n\n"
+           "Copy the complete, unredacted command anyway?"),
+        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes) {
+      return;
+    }
+    QGuiApplication::clipboard()->setText(mArgs.join(" "));
   });
 
   QObject::connect(mProcess, &QProcess::readyRead, this, [=, this]() {

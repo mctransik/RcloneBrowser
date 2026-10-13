@@ -101,3 +101,20 @@ The Windows ZIP now aims to include `docs/BUILD_PROVENANCE.txt` (source checkout
 The development-branch `release` job has been **disabled unconditionally** while the Firefox malware investigation is open. This protects only workflow versions containing the change: `main`, historical tags, and prior releases are **not altered**. Do not create new release tags while the old main-branch workflow still permits automatic publication. Before enabling any release path, complete the security review, require explicit human approval, and audit the release workflow and repository rules.
 
 **Still outstanding:** Exact Firefox-blocked sample identification, independent malware verdict, third-party SBOM/license review, other pinned build inputs, runtime credential and filesystem tests, approved code signing, and human release approval.
+
+## Credential handling follow-up — 2026-10-13
+
+Source review on `feature/cloud-control-ui-mvp` identified two low-risk fixes in this development revision:
+
+- `src/main_window.cpp` now recognizes the `RCLONE_CONFIG_PASS` / obsolete `listremotes` hints even at byte offset zero in stderr; the previous `indexOf(...) > 0` skipped that position. This is a **password-prompt reliability fix**, not encryption hardening.
+- `src/job_widget.cpp` now requires **explicit confirmation before copying the unredacted rclone command to the operating-system clipboard**. There is no claim of automatic redaction: users who confirm will still copy any included secrets.
+
+These changes require a fresh Windows/Linux CI run and a manual GUI check with disposable credentials. They do **not** eliminate the following open credential-security review items:
+
+1. `src/utils.cpp`: the encrypted-config password is held in process-wide `static QString gRclonePassword` for the application's lifetime and is passed to rclone children through `RCLONE_CONFIG_PASS`. This is a supported rclone mechanism but must be reviewed for lifetime, child process scope, and memory handling. No app-specific disk persistence of that password was observed in this pass.
+2. `src/main.cpp`, `src/main_window.cpp`, `src/preferences_dialog.cpp` and `src/rclone_updater.cpp`: the application can **persist proxy URLs containing usernames/passwords in QSettings** and expose them as environment variables for child processes. In portable mode, settings can live in an app-directory INI file. This needs a secure migration/storage design that does not silently delete working proxy credentials.
+3. `src/job_options.cpp` + `src/list_of_job_options.cpp`: arbitrary extra rclone flags are saved in the unencrypted task-data file; they may contain secrets if a user enters credential-bearing arguments. Review filename, permissions, and upgrade/migration strategy.
+4. `src/job_widget.cpp`, `src/progress_dialog.cpp`, `src/stream_widget.cpp`, `src/mount_widget.cpp`: subprocess output may contain URLs, tokens or sensitive names and currently reaches UI logs unsanitized. Implement a tested, conservative secret-handling policy before allowing logs to be exported/shared; never market simple regex replacements as total protection.
+5. Inspect all temporary shell scripts, external player commands, config-file permissions, and production cloud-service behavior. Avoid testing with live accounts or backups until independent release review.
+
+**Status:** Partial source audit only; no runtime inspection or penetration test. Do not claim that passwords or tokens cannot leak. Firefox malware detection and production release gate remain unresolved.
