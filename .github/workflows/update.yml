@@ -357,6 +357,57 @@ jobs:
           path: dist/*.AppImage
           if-no-files-found: error
 
+  historical_windows_security:
+    name: Historical Windows malware investigation (ClamAV)
+    # Manual and development-branch only. No write permission or releases.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/cloud-control-ui-mvp' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install ClamAV and refresh official signature database
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q clamav clamav-freshclam
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo freshclam --stdout
+          clamscan --version
+
+      - name: Verify exact historical GitHub Actions ZIPs without execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/audit_historical_windows_artifacts.py
+
+      - name: Scan historical Windows ZIPs and extracted files
+        run: |
+          set -euo pipefail
+          clamscan --recursive --infected --fail-if-cvd-older-than=3 \
+            --max-filesize=200M --max-scansize=500M --max-recursion=20 \
+            --max-files=20000 --log=historical-reports/clamav-historical.log \
+            historical-scan-inputs
+          clamscan --version | tee historical-reports/clamav-version.txt
+          echo "result=no_detections_reported" | tee historical-reports/scan-result.txt
+          echo "source_commit=$GITHUB_SHA" >> historical-reports/scan-result.txt
+          echo "run_id=$GITHUB_RUN_ID" >> historical-reports/scan-result.txt
+
+      # Report only: historical binaries are not uploaded a second time.
+      - name: Upload historical artifact investigation report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: historical-windows-malware-investigation
+          path: historical-reports/
+          if-no-files-found: ignore
+
   release:
     name: Release (disabled during security review)
     # FAIL CLOSED: no tag, dispatch, or PR may publish until the manual
