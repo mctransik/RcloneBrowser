@@ -10,6 +10,7 @@
 #include "mount_widget.h"
 #include "preferences_dialog.h"
 #include "credential_safety.h"
+#include "proxy_credentials.h"
 #include "remote_widget.h"
 #include "stream_widget.h"
 #include "transfer_dialog.h"
@@ -95,6 +96,36 @@ MainWindow::MainWindow() {
     PreferencesDialog dialog(this);
     if (dialog.exec() == QDialog::Accepted) {
       auto settings = GetSettings();
+      const QString http = dialog.getHttpProxy().trimmed();
+      const QString https = dialog.getHttpsProxy().trimmed();
+      const bool portable = IsPortableMode();
+      if (portable && (ProxyCredentials::hasUserInfo(http) ||
+                       ProxyCredentials::hasUserInfo(https))) {
+        if (QMessageBox::warning(
+                this, tr("Portable proxy credentials"),
+                tr("Portable mode stores proxy URLs in an unencrypted settings "
+                   "file. Anyone with access to that file may read embedded "
+                   "usernames or passwords.\n\nSave anyway?"),
+                QMessageBox::Yes | QMessageBox::Cancel,
+                QMessageBox::Cancel) != QMessageBox::Yes)
+          return;
+      }
+      QString error;
+#ifdef Q_OS_WIN
+      const bool protect = !portable;
+#else
+      const bool protect = false;
+#endif
+      if (!ProxyCredentials::save(settings.get(), "Settings/http_proxy",
+                                  http, protect, &error) ||
+          !ProxyCredentials::save(settings.get(), "Settings/https_proxy",
+                                  https, protect, &error)) {
+        QMessageBox::critical(
+            this, tr("Proxy settings not saved"),
+            tr("%1\n\nThe previous credentials were preserved; "
+               "please check the proxy settings.").arg(error));
+        return;
+      }
       settings->setValue("Settings/rclone", dialog.getRclone().trimmed());
       settings->setValue("Settings/rcloneConf",
                          dialog.getRcloneConf().trimmed());
@@ -133,10 +164,6 @@ MainWindow::MainWindow() {
       settings->setValue("Settings/iconSize", dialog.getIconSize().trimmed());
 
       settings->setValue("Settings/useProxy", dialog.getUseProxy());
-      settings->setValue("Settings/http_proxy",
-                         dialog.getHttpProxy().trimmed());
-      settings->setValue("Settings/https_proxy",
-                         dialog.getHttpsProxy().trimmed());
       settings->setValue("Settings/no_proxy", dialog.getNoProxy().trimmed());
 
       SetRclone(dialog.getRclone());

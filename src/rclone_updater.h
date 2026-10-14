@@ -68,4 +68,5 @@ private:
   std::unique_ptr<QTemporaryDir> mWorkDir;
   bool mBusy = false;
   bool mCancelled = false;
+  QString mProxyConfigurationError;
 };

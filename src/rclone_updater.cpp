@@ -1,5 +1,6 @@
 #include "rclone_updater.h"
 #include "utils.h"
+#include "proxy_credentials.h"
 
 namespace {
 
@@ -26,12 +27,24 @@ RcloneUpdater::RcloneUpdater(QObject *parent)
   // Honour the proxy configured in Rclone Browser's preferences; otherwise
   // use the Windows/system proxy settings.
   auto settings = GetSettings();
-  QUrl proxyUrl(settings->value("Settings/https_proxy").toString());
-  if (settings->value("Settings/useProxy").toBool() && proxyUrl.isValid() &&
-      !proxyUrl.host().isEmpty()) {
-    mNet->setProxy(QNetworkProxy(QNetworkProxy::HttpProxy, proxyUrl.host(),
-                                 quint16(proxyUrl.port(8080)),
-                                 proxyUrl.userName(), proxyUrl.password()));
+  if (settings->value("Settings/useProxy").toBool()) {
+    QString proxyText, error;
+    if (!ProxyCredentials::load(settings.get(), "Settings/https_proxy",
+                                &proxyText, &error) ||
+        (proxyText.isEmpty() &&
+         !ProxyCredentials::load(settings.get(), "Settings/http_proxy",
+                                 &proxyText, &error))) {
+      mProxyConfigurationError = error;
+    } else {
+      const QUrl proxyUrl(proxyText);
+      if (proxyUrl.isValid() && !proxyUrl.host().isEmpty()) {
+        mNet->setProxy(QNetworkProxy(QNetworkProxy::HttpProxy, proxyUrl.host(),
+                                     quint16(proxyUrl.port(8080)),
+                                     proxyUrl.userName(), proxyUrl.password()));
+      } else if (!proxyText.isEmpty()) {
+        mProxyConfigurationError = tr("Configured proxy address is invalid.");
+      }
+    }
   } else {
     QNetworkProxyFactory::setUseSystemConfiguration(true);
   }
@@ -156,6 +169,10 @@ void RcloneUpdater::cancel() {
 // ---------------------------------------------------------------- check ----
 
 void RcloneUpdater::checkLatest() {
+  if (!mProxyConfigurationError.isEmpty()) {
+    emit failed(mProxyConfigurationError);
+    return;
+  }
   if (mBusy) {
     return;
   }
@@ -203,6 +220,10 @@ void RcloneUpdater::checkFrom(int i) {
 // -------------------------------------------------------------- install ----
 
 void RcloneUpdater::install(const QString &version) {
+  if (!mProxyConfigurationError.isEmpty()) {
+    emit failed(mProxyConfigurationError);
+    return;
+  }
   if (mBusy) {
     return;
   }
@@ -234,10 +255,17 @@ void RcloneUpdater::install(const QString &version) {
   QProcessEnvironment childEnv = QProcessEnvironment::systemEnvironment();
   const auto settings = GetSettings();
   if (settings->value("Settings/useProxy").toBool()) {
-    QString proxyText = settings->value("Settings/https_proxy").toString().trimmed();
-    if (proxyText.isEmpty()) {
-      proxyText = settings->value("Settings/http_proxy").toString().trimmed();
+    QString proxyText, credentialError;
+    if (!ProxyCredentials::load(settings.get(), "Settings/https_proxy",
+                                &proxyText, &credentialError) ||
+        (proxyText.isEmpty() &&
+         !ProxyCredentials::load(settings.get(), "Settings/http_proxy",
+                                 &proxyText, &credentialError))) {
+      emit failed(tr("Protected proxy settings are unavailable: %1")
+                      .arg(credentialError));
+      return;
     }
+    proxyText = proxyText.trimmed();
     const QUrl proxy(proxyText);
     if (!proxy.isValid() || proxy.host().isEmpty() ||
         (proxy.scheme() != QLatin1String("http") &&

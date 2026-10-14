@@ -2,6 +2,7 @@
 #include "main_window.h"
 #include "theme.h"
 #include "utils.h"
+#include "proxy_credentials.h"
 
 int main(int argc, char *argv[]) {
 
@@ -64,13 +65,42 @@ int main(int argc, char *argv[]) {
     settings->setValue("Settings/no_proxy", "");
   };
 
+#ifdef Q_OS_WIN
+  if (!IsPortableMode()) {
+    for (const QString &key : {QStringLiteral("Settings/http_proxy"),
+                               QStringLiteral("Settings/https_proxy")}) {
+      QString error;
+      if (!ProxyCredentials::migrateLegacy(settings.get(), key, true, &error)) {
+        const auto choice = QMessageBox::warning(
+            nullptr, QObject::tr("Proxy credential migration"),
+            QObject::tr("Your existing proxy settings were not modified. "
+                        "Windows Credential Manager could not securely "
+                        "migrate a proxy entry.\n\n%1\n\n"
+                        "Continue this session with the existing configuration "
+                        "(which may still contain plaintext credentials)?")
+                .arg(error),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (choice != QMessageBox::Yes) return 1;
+      }
+    }
+  }
+#endif
   if (settings->value("Settings/useProxy").toBool()) {
-    qputenv("HTTP_PROXY", settings->value("Settings/http_proxy").toByteArray());
-    qputenv("http_proxy", settings->value("Settings/http_proxy").toByteArray());
-    qputenv("HTTPS_PROXY",
-            settings->value("Settings/https_proxy").toByteArray());
-    qputenv("https_proxy",
-            settings->value("Settings/https_proxy").toByteArray());
+    QString httpProxy, httpsProxy, error;
+    if (!ProxyCredentials::load(settings.get(), "Settings/http_proxy",
+                                &httpProxy, &error) ||
+        !ProxyCredentials::load(settings.get(), "Settings/https_proxy",
+                                &httpsProxy, &error)) {
+      QMessageBox::critical(nullptr, QObject::tr("Proxy credentials unavailable"),
+                            QObject::tr("%1\n\nThe application will exit to "
+                                        "avoid bypassing a configured proxy.")
+                                .arg(error));
+      return 1;
+    }
+    qputenv("HTTP_PROXY", httpProxy.toUtf8());
+    qputenv("http_proxy", httpProxy.toUtf8());
+    qputenv("HTTPS_PROXY", httpsProxy.toUtf8());
+    qputenv("https_proxy", httpsProxy.toUtf8());
     qputenv("NO_PROXY", settings->value("Settings/no_proxy").toByteArray());
     qputenv("no_proxy", settings->value("Settings/no_proxy").toByteArray());
   }
