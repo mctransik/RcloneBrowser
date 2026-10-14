@@ -128,3 +128,9 @@ A new mandatory Microsoft Defender scan gate for the Windows package and ZIP is 
 ## 2026-10-14 — Defender unavailable, Linux ClamAV alternative pending CI
 
 [Workflow #38582287046](https://github.com/mctransik/RcloneBrowser/actions/runs/38582287046) failed its first Microsoft Defender scan solely because the Windows runner reported Defender was not active, following a failed signature-update attempt. Windows C++ tests/build and Linux passed; **no Windows package was promoted**. The workflow now labels staged Windows inputs explicitly UNSCANNED and scans them using ClamAV with refreshed official signatures on Ubuntu before creating final Windows artifact names. See [new scan policy](MALWARE_SCAN_GATE_CLAMAV_2026-10-14.md). This code is **not yet CI validated**. Neither ClamAV nor Defender can by themselves resolve the Firefox warning.
+
+## 2026-10-14 — Historical artifact scanning verified
+
+[Workflow #38595828400](https://github.com/mctransik/RcloneBrowser/actions/runs/38595828400) completed successfully. The six pinned GitHub Actions Windows ZIPs from 10–11 October all matched their GitHub-reported SHA-256 values; each contained 67 ZIP entries. ClamAV 1.5.4, with refreshed databases (3,628,169 signatures reported), scanned 408 files (404.18 MiB) and reported **0 infected files**. See [historical evidence](HISTORICAL_WINDOWS_MALWARE_AUDIT_2026-10-14.md). The current Windows package scan likewise reported 0 infected files. The scanned Windows builds passed CI; releases remained disabled.
+
+**Do not label the Firefox warning a false positive.** The blocked download has not been uniquely tied to a verified artifact digest. ClamAV detection and browser download-reputation checks are distinct. The warning, independent second-opinion analysis, and release-signing review remain open.
