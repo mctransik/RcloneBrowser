@@ -124,6 +124,9 @@ if(RB_BUILD_TESTS)
     endif()
     set_target_properties(test_proxy_credentials PROPERTIES
                           RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
-    add_test(NAME proxy_credentials COMMAND test_proxy_credentials)
+    # Write a machine-readable diagnostic file even when Windows QtTest
+    # cannot attach its output to the console on GitHub-hosted runners.
+    add_test(NAME proxy_credentials COMMAND test_proxy_credentials
+             -o "${CMAKE_BINARY_DIR}/tests/proxy_credentials.xml,xml")
   endif()
 endif()

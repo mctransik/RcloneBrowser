@@ -59,7 +59,11 @@ jobs:
           REM Verbose CTest output is required to diagnose Windows
           REM credential-manager behavior on GitHub-hosted logon sessions.
           REM The tests use only disposable dummy proxy addresses.
-          ctest --test-dir build --output-on-failure --verbose || exit /b 1
+          ctest --test-dir build --output-on-failure --verbose
+          if errorlevel 1 (
+            if exist build\tests\proxy_credentials.xml type build\tests\proxy_credentials.xml
+            exit /b 1
+          )
 
       - name: Assemble app folder
         shell: pwsh

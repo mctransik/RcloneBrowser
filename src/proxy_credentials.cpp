@@ -148,7 +148,12 @@ bool save(QSettings *s, const QString &key, const QString &value,
 
   QString oldValue;
   const bool oldReadable = load(s, key, &oldValue);
-  if (oldReadable && oldValue == value) return true;
+  // Equal legacy plaintext must still be migrated to Credential Manager.
+  // Short-circuit only if the credential is already protected or the
+  // value has no userinfo to protect.
+  if (oldReadable && oldValue == value &&
+      (!protect || !oldTarget.isEmpty() || !hasUserInfo(value)))
+    return true;
   // When a saved Credential Manager entry is missing, the preferences dialog
   // can show only the sanitized public URL. Saving that unchanged value must
   // NOT silently discard the credential reference.
