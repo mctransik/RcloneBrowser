@@ -16,3 +16,7 @@
 
 - Defense against silent credential loss: saving an unchanged, sanitized URL while the referenced credential is unavailable is rejected. The user must re-enter authenticated proxy settings deliberately.
 - The updater refuses update checks if a custom proxy is selected but missing or invalid; it must not silently fall back to a direct connection.
+
+## Windows CI diagnostic follow-up (2026-10-14)
+
+Run [#38535052799](https://github.com/mctransik/RcloneBrowser/actions/runs/38535052799) compiled the Windows application and all three test executables but **failed the `proxy_credentials` CTest** (1 of 3 failed). Linux passed all three tests and completed its package successfully. The existing Windows CTest log did not include the failing assertion or Windows error code. The workflow now uses `ctest --verbose --output-on-failure` to show the exact QtTest failure. No credentials from real users are used by the test; the integration path uses disposable dummy data. The actual Windows cause is still **unknown** until the new CI run. Do not waive or reinterpret the failing test as successful.

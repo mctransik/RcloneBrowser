@@ -56,7 +56,10 @@ jobs:
           call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release || exit /b 1
           cmake --build build || exit /b 1
-          ctest --test-dir build --output-on-failure || exit /b 1
+          REM Verbose CTest output is required to diagnose Windows
+          REM credential-manager behavior on GitHub-hosted logon sessions.
+          REM The tests use only disposable dummy proxy addresses.
+          ctest --test-dir build --output-on-failure --verbose || exit /b 1
 
       - name: Assemble app folder
         shell: pwsh
