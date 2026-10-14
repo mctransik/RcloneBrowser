@@ -13,6 +13,11 @@ private slots:
     QVERIFY(ProxyCredentials::hasUserInfo(secret));
     QCOMPARE(ProxyCredentials::withoutUserInfo(secret),
              QStringLiteral("http://proxy.example:8080"));
+    const QString encoded = QStringLiteral(
+        "https://name:p%3A%40%2F@proxy.example:8443");
+    QVERIFY(ProxyCredentials::hasUserInfo(encoded));
+    QCOMPARE(ProxyCredentials::withoutUserInfo(encoded),
+             QStringLiteral("https://proxy.example:8443"));
     QVERIFY(!ProxyCredentials::hasUserInfo(
         QStringLiteral("https://proxy.example:8443")));
   }

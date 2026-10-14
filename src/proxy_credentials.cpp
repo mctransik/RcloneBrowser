@@ -4,6 +4,7 @@
 #include <QRegularExpression>
 #include <QUuid>
 #include <QUrl>
+#include <string>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -146,7 +147,17 @@ bool save(QSettings *s, const QString &key, const QString &value,
     return fail(error, QStringLiteral("Invalid old proxy credential reference."));
 
   QString oldValue;
-  if (load(s, key, &oldValue) && oldValue == value) return true;
+  const bool oldReadable = load(s, key, &oldValue);
+  if (oldReadable && oldValue == value) return true;
+  // When a saved Credential Manager entry is missing, the preferences dialog
+  // can show only the sanitized public URL. Saving that unchanged value must
+  // NOT silently discard the credential reference.
+  if (!oldReadable && !oldTarget.isEmpty() &&
+      value == s->value(key).toString()) {
+    return fail(error, QStringLiteral(
+        "Saved proxy credentials could not be loaded. Re-enter the full "
+        "authenticated proxy URL before replacing this entry."));
+  }
 
   if (!protect) {
     if (!commitSettings(s, key, value, QString(), error)) return false;

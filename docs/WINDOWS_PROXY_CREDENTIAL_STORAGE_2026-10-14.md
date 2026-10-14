@@ -13,3 +13,6 @@
 **Risks not covered:** malicious same-user processes, raw proxy values in application memory and process environments, saved `tasks.bin` extra arguments, clipboard confirmation once user approves, unredacted transfer logs, Firefox download warning, code signing, and release approvals.
 
 **Acceptance before release:** complete Windows CI including non-skipped Credential Manager round-trip, GUI migration from disposable credentials, Windows portable-mode warning, missing-credential failure and repair, start/restart behavior, proxy authentication connectivity, and no plaintext secrets in QSettings after successful migration.
+
+- Defense against silent credential loss: saving an unchanged, sanitized URL while the referenced credential is unavailable is rejected. The user must re-enter authenticated proxy settings deliberately.
+- The updater refuses update checks if a custom proxy is selected but missing or invalid; it must not silently fall back to a direct connection.

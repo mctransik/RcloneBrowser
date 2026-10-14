@@ -37,12 +37,15 @@ RcloneUpdater::RcloneUpdater(QObject *parent)
       mProxyConfigurationError = error;
     } else {
       const QUrl proxyUrl(proxyText);
-      if (proxyUrl.isValid() && !proxyUrl.host().isEmpty()) {
+      if (proxyUrl.isValid() && !proxyUrl.host().isEmpty() &&
+          (proxyUrl.scheme() == QLatin1String("http") ||
+           proxyUrl.scheme() == QLatin1String("https"))) {
         mNet->setProxy(QNetworkProxy(QNetworkProxy::HttpProxy, proxyUrl.host(),
                                      quint16(proxyUrl.port(8080)),
                                      proxyUrl.userName(), proxyUrl.password()));
-      } else if (!proxyText.isEmpty()) {
-        mProxyConfigurationError = tr("Configured proxy address is invalid.");
+      } else {
+        mProxyConfigurationError = tr("Custom proxy is missing or invalid; "
+                                      "update checks were blocked.");
       }
     }
   } else {
