@@ -123,3 +123,8 @@ These changes require a fresh Windows/Linux CI run and a manual GUI check with d
 ## 2026-10-14 — Windows malware gate added; validation pending
 
 A new mandatory Microsoft Defender scan gate for the Windows package and ZIP is in the development workflow before artifact uploads. Details: [Malware scan gate](MALWARE_SCAN_GATE_2026-10-14.md). **No new scan result is claimed until CI executes this code.** The old Firefox malware warning remains unresolved. Releases are still disabled.
+
+
+## 2026-10-14 — Defender unavailable, Linux ClamAV alternative pending CI
+
+[Workflow #38582287046](https://github.com/mctransik/RcloneBrowser/actions/runs/38582287046) failed its first Microsoft Defender scan solely because the Windows runner reported Defender was not active, following a failed signature-update attempt. Windows C++ tests/build and Linux passed; **no Windows package was promoted**. The workflow now labels staged Windows inputs explicitly UNSCANNED and scans them using ClamAV with refreshed official signatures on Ubuntu before creating final Windows artifact names. See [new scan policy](MALWARE_SCAN_GATE_CLAMAV_2026-10-14.md). This code is **not yet CI validated**. Neither ClamAV nor Defender can by themselves resolve the Firefox warning.
