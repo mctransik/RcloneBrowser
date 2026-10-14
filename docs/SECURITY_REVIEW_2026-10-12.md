@@ -118,3 +118,8 @@ These changes require a fresh Windows/Linux CI run and a manual GUI check with d
 5. Inspect all temporary shell scripts, external player commands, config-file permissions, and production cloud-service behavior. Avoid testing with live accounts or backups until independent release review.
 
 **Status:** Partial source audit only; no runtime inspection or penetration test. Do not claim that passwords or tokens cannot leak. Firefox malware detection and production release gate remain unresolved.
+
+
+## 2026-10-14 — Windows malware gate added; validation pending
+
+A new mandatory Microsoft Defender scan gate for the Windows package and ZIP is in the development workflow before artifact uploads. Details: [Malware scan gate](MALWARE_SCAN_GATE_2026-10-14.md). **No new scan result is claimed until CI executes this code.** The old Firefox malware warning remains unresolved. Releases are still disabled.
