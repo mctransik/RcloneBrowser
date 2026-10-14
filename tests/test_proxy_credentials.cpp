@@ -45,7 +45,11 @@ private slots:
     s.setValue(key, raw);
     QString err;
     if (!ProxyCredentials::migrateLegacy(&s, key, true, &err)) {
-      QSKIP("Windows CI user session has no usable Credential Manager.");
+      // A noninteractive Windows logon may lack a credential set (1312).
+      // Other failures must fail the build rather than being hidden as skips.
+      if (err.contains(QStringLiteral("error 1312")))
+        QSKIP("Windows CI logon has no Credential Manager session (1312).");
+      QFAIL(qPrintable(err));
     }
     s.sync();
     const QString publicUrl = s.value(key).toString();
@@ -60,6 +64,16 @@ private slots:
         qPrintable(err));
     QCOMPARE(s.value(key).toString(), QStringLiteral("http://proxy.example:8080"));
     QVERIFY(s.value(key + "CredentialTarget").toString().isEmpty());
+
+    // A stale protected reference must not be dropped just because the
+    // preferences dialog can only show its public/sanitized URL.
+    const QString missingTarget = QStringLiteral(
+        "RcloneBrowser.Proxy.v1.00000000-0000-4000-8000-000000000000");
+    s.setValue(key + "CredentialTarget", missingTarget);
+    s.sync();
+    QVERIFY(!ProxyCredentials::save(
+        &s, key, QStringLiteral("http://proxy.example:8080"), true, &err));
+    QCOMPARE(s.value(key + "CredentialTarget").toString(), missingTarget);
 #else
     QSKIP("Credential Manager is Windows-only; URL parsing tested separately.");
 #endif
