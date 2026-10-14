@@ -64,6 +64,10 @@ jobs:
             if exist build\tests\proxy_credentials.xml type build\tests\proxy_credentials.xml
             exit /b 1
           )
+          REM Print success and skip status too: QtTest skips count as a passed
+          REM CTest process, but a skipped Credential Manager test is not proof
+          REM that the Windows credential store was exercised.
+          if exist build\tests\proxy_credentials.xml type build\tests\proxy_credentials.xml
 
       - name: Assemble app folder
         shell: pwsh
