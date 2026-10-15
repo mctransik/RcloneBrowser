@@ -32,7 +32,7 @@ Roles must be verified and the responsible people or GitHub permission groups pu
 
 1. Review source changes, CMake files, GitHub Actions workflows, build inputs, included third-party binaries and licenses. Resolve findings before a release.
 2. Select a reviewed, protected release ref. Development-branch and pull-request artifacts are **not signable**.
-3. Build through a trusted CI system using the reviewed ref; confirm commit identity and build provenance. Restrict dependencies and network downloads sufficiently to support origin verification. The current CI downloads a current rclone version and caches Qt; its exact dependency reproducibility still needs assessment.
+3. Build through a trusted CI system using the reviewed ref; confirm commit identity and build provenance. Restrict dependencies and network downloads sufficiently to support origin verification. The current CI pins the rclone version and validates its PGP-signed checksums plus a committed expected archive SHA-256. Qt is set to a fixed version but retrieved using a cached installer, and other supply-chain inputs are not yet fully reproducible; independent dependency provenance still needs assessment.
 4. Inspect the resulting release candidate for suspicious behavior; investigate reports and antivirus detections instead of suppressing warnings. Verify package content, hashes, version resources and publisher metadata.
 5. Submit the exact built artifact to an approved SignPath signing policy using verified build-origin data. Require manual sign-off for **each** signing request.
 6. Verify the returned Authenticode signature, expected publisher identity, timestamp and artifact digest before publishing.
@@ -56,9 +56,13 @@ If the project is eventually accepted, its public release and homepage policy mu
 ## Current evidence and limitations
 
 - CI definition: [`.github/workflows/update.yml`](../.github/workflows/update.yml).
-- The release-tag workflow currently generates hashes and GitHub provenance attestations; neither creates an Authenticode-signed executable.
+- The **release-tag job is disabled** while security review continues; its planned checksum/attestation/publishing steps do not run. A separate, manual, **development-branch-only** `windows_provenance` job has been implemented after successful ClamAV review of the Windows ZIP and awaits its first CI validation; it likewise does not create an Authenticode-signed executable.
 - The automated pipeline builds and tests Windows/Linux; a clean build is not a malware verdict.
 - The project currently distributes a portable directory ZIP, not a signed Windows installer.
 - No SignPath signing key, organization identifier or token should be added to this repository.
 
 Security or signing status must remain clearly marked **unverified** until the necessary independent checks are actually completed.
+
+## Development-only provenance gate (implemented; not yet confirmed by CI)
+
+See [scanned Windows build provenance plan](WINDOWS_BUILD_PROVENANCE_2026-10-15.md). The gate verifies the SHA-256 of the promoted ZIP against the scanner-produced checksum, then requests an OIDC-backed GitHub repository attestation and enforces exact repository, workflow, source commit and branch with the GitHub CLI. **This is not a code-signing certificate or permission to release.**
