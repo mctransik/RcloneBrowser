@@ -11,6 +11,9 @@ protected:
 
 public:
   static ListOfJobOptions *getInstance();
+  // True only if tasks.bin was successfully updated.
+  // On failure, a newly added item or a removed item is rolled back.
+  // Editing callers must restore the previous JobOptions fields themselves.
   bool Persist(JobOptions *jo);
   bool Forget(JobOptions *jo);
   QList<JobOptions *> &getTasks() { return tasks; }

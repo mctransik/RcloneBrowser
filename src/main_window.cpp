@@ -262,8 +262,16 @@ MainWindow::MainWindow() {
   QObject::connect(ui.buttonDeleteTask, &QPushButton::clicked, this, [=, this]() {
     JobOptionsListWidgetItem *item = static_cast<JobOptionsListWidgetItem *>(
         ui.tasksListWidget->currentItem());
+    if (!item)
+      return;
     JobOptions *jo = item->GetData();
-    ListOfJobOptions::getInstance()->Forget(jo);
+    if (!ListOfJobOptions::getInstance()->Forget(jo)) {
+      QMessageBox::critical(
+          this, tr("Task not deleted"),
+          tr("The task could not be deleted because the task list could not "
+             "be saved. The task has been kept. Please check that the "
+             "application data folder is writable and try again."));
+    }
   });
 
   QObject::connect(ListOfJobOptions::getInstance(),

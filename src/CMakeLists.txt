@@ -28,6 +28,7 @@ set(SOURCES
   job_options.cpp job_options.h
   list_of_job_options.cpp list_of_job_options.h
   task_storage.cpp task_storage.h
+  task_list_transaction.h
   pch.h
   resources.qrc
 )
@@ -117,6 +118,14 @@ if(RB_BUILD_TESTS)
     set_target_properties(test_task_storage PROPERTIES
                           RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME task_storage COMMAND test_task_storage)
+
+    add_executable(test_task_list_transaction
+                   ../tests/test_task_list_transaction.cpp task_list_transaction.h)
+    target_include_directories(test_task_list_transaction PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_task_list_transaction PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_task_list_transaction PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME task_list_transaction COMMAND test_task_list_transaction)
 
     add_executable(test_credential_safety ../tests/test_credential_safety.cpp credential_safety.h)
     target_include_directories(test_credential_safety PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

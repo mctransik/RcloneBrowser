@@ -98,10 +98,25 @@ TransferDialog::TransferDialog(bool isDownload, bool isDrop,
                            "Invalid Task, source and destination required!");
       return;
     }
+    // In edit mode getJobOptions() updates the original in-memory record.
+    // Preserve its prior state so a failed disk write does not leave an
+    // apparently-saved edit in the task list.
+    const bool editingSavedTask = mIsEditMode && mJobOptions != nullptr;
+    JobOptions previous;
+    if (editingSavedTask)
+      previous = *mJobOptions;
     JobOptions *jobo = getJobOptions();
-    ListOfJobOptions::getInstance()->Persist(jobo);
-    // always close on save
-    // if (mIsEditMode)
+    if (!ListOfJobOptions::getInstance()->Persist(jobo)) {
+      if (editingSavedTask)
+        *jobo = previous;
+      QMessageBox::critical(
+          this, tr("Task not saved"),
+          tr("The task could not be saved. Your changes are still in this "
+             "dialog, and the previous saved task list has been kept. "
+             "Please check that the application data folder is writable "
+             "and try again."));
+      return; // keep the dialog open for a retry
+    }
     this->close();
   });
 

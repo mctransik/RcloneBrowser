@@ -1,5 +1,6 @@
 #include "list_of_job_options.h"
 #include "task_storage.h"
+#include "task_list_transaction.h"
 #include <QDataStream>
 #include <qdir.h>
 #include <qlogging.h>
@@ -27,29 +28,17 @@ ListOfJobOptions *ListOfJobOptions::getInstance() {
 }
 
 bool ListOfJobOptions::Persist(JobOptions *jo) {
-  bool isNew = !this->tasks.contains(jo);
-  if (isNew)
-    this->tasks.append(jo);
-  else {
-    //    int ix = tasks.indexOf(jo);
-    //    JobOptions *old = tasks[ix];
-    //    qDebug() << QString("old [%1] New [%2]")
-    //                    .arg(old->description)
-    //                    .arg(jo->description);
-  }
-  PersistToUserData();
-  return isNew;
+  // Success means the new/edited task was written to disk, NOT "is new".
+  return TaskListTransaction::persist(tasks, jo, [this]() {
+    return PersistToUserData();
+  });
 }
 
 bool ListOfJobOptions::Forget(JobOptions *jo) {
-  bool isKnown = this->tasks.contains(jo);
-  if (!isKnown)
-    return false;
-  int ix = tasks.indexOf(jo);
-  tasks.removeAt(ix);
-  //  qDebug() << QString("removed [%1]").arg(jo->description);
-  PersistToUserData();
-  return isKnown;
+  // Restore the item and its original position if the disk save fails.
+  return TaskListTransaction::forget(tasks, jo, [this]() {
+    return PersistToUserData();
+  });
 }
 
 QString ListOfJobOptions::GetPersistenceFilePath() {

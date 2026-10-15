@@ -33,3 +33,17 @@ Reference: [Qt QSaveFile class](https://doc.qt.io/qt-6/qsavefile.html).
 The same run reported **24 valid and 2 unsigned** Windows executable/DLL Authenticode statuses (no abnormal statuses); ClamAV scanned **70 files with 0 detections** in the current Windows payload and **408 with 0 detections** in six historical Windows packages. The independently checked GitHub provenance attestation was created for the **exact scanned** Windows application ZIP, digest `f7ad02f528ee5917992e194f949c3665a9b3f2812da98287e50a2e9055696414`. The `release` job remained **disabled/skipped**.
 
 These findings validate the focused task-storage change in the CI environments, not confidentiality of `tasks.bin` as a whole. Plaintext sensitive flags, Windows NTFS ACLs, app-level failure notifications, and the historical Firefox malware warning remain open issues.
+
+## Visible write errors and transactional task list (implemented; CI pending)
+
+The original saved-task GUI closed the transfer dialog after calling `Persist` even when `QSaveFile` reported failure. Deleting a task also removed it from the in-memory list before a disk commit, without restoring it on error. Edited task fields were mutated on the shared `JobOptions` instance before a failed save.
+
+The focused update now:
+
+- Gives `ListOfJobOptions::Persist` and `Forget` an explicit **success/failure** result rather than the former "is new"/"was known" meaning. The only production call sites ignored the old results.
+- Rolls back newly appended task pointers and unsuccessful deletions (including their original ordering). The successful save still emits `tasksListUpdated`; failure does not.
+- On an unsuccessful edited-task save, restores the original `JobOptions` fields without destroying the user's unsaved GUI input. The edit dialog remains open for a retry.
+- Shows clear critical dialogs when saving or deleting fails, rather than falsely behaving as though the operation succeeded. Error text deliberately does not include task names, command arguments, secrets, or untrusted filesystem paths.
+- Adds a Qt test suite for successful and failed append/delete transactions, list ordering, repeated task save and invalid/null operations, with synthetic data only.
+
+**Limits:** These tests exercise in-memory transactional behavior and failed-write simulation, not the complete interactive Qt dialog; manual GUI checking with disposable tasks remains necessary. The prior task-storage tests still exercise actual `QSaveFile` behavior. No encryption is added, and nothing here resolves the historical Firefox malware alert. Release remains disabled.
