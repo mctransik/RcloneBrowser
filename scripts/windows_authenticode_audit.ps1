@@ -16,7 +16,7 @@ $csvPath = Join-Path $outDir "windows-authenticode-files.csv"
 $summaryPath = Join-Path $outDir "windows-authenticode-summary.txt"
 $summary = [System.Collections.Generic.List[string]]::new()
 $summary.Add("Windows executable Authenticode provenance audit")
-$summary.Add("result=not_completed")
+$summary.Add("audit_started=true")
 $summary.Add("source_commit=$env:GITHUB_SHA")
 $summary.Add("github_run_id=$env:GITHUB_RUN_ID")
 $summary.Add("github_run_attempt=$env:GITHUB_RUN_ATTEMPT")
@@ -92,11 +92,11 @@ try {
         $summary.Add("file=$($row.relative_path) status=$($row.signature_status) sha256=$($row.sha256)")
     }
 
-    $summary.Add("result=audited_signatures_only")
     if ($unexpected.Count -gt 0) {
         $summary.Add("result=blocked_unexpected_signature_status")
         throw "$($unexpected.Count) file(s) have unexpected/invalid Windows signature status. Manual review required."
     }
+    $summary.Add("result=audited_signatures_only")
     Write-Host "Windows Authenticode audit: $($rows.Count) EXE/DLL files; $($valid.Count) valid, $($unsigned.Count) unsigned, $($unexpected.Count) abnormal."
     Write-Host "No malware-free verdict or release approval is implied."
 }

@@ -1,6 +1,6 @@
 # Windows Authenticode and component provenance audit — 2026-10-15
 
-**Status: implemented on development branch, CI execution pending. No malware-free verdict or release approval.**
+**Status: completed and verified on Windows GitHub Actions 2026-10-15. No malware-free verdict or release approval.**
 
 The Windows `Update` job now runs `scripts/windows_authenticode_audit.ps1` against the **assembled** Windows package, after the ZIP has been made and before an `UNSCANNED` build staging artifact is uploaded. The audit:
 - Enumerates all packaged `.exe` and `.dll` binaries (including the main application, bundled rclone, Qt modules and VC++ runtime).
@@ -17,3 +17,24 @@ The Windows `Update` job now runs `scripts/windows_authenticode_audit.ps1` again
 Reference: [Microsoft Get-AuthenticodeSignature](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/get-authenticodesignature)
 
 **Release stays disabled.** Results must be reviewed before any further policy changes.
+
+## Observed Windows GitHub Actions results (2026-10-15)
+
+Evidence: [run #38713775680](https://github.com/mctransik/RcloneBrowser/actions/runs/38713775680), commit `7604b18b4aa442acfd1968de588b1ed3a9f4fe24`. The text-only `windows-authenticode-audit` artifact ID `11961727207` was downloaded, opened and independently summarized. The actual runner completed the new audit step successfully.
+
+| Payload class | Number | Windows signature status / verified signer |
+|---|---:|---|
+| Qt libraries (Qt6 and plugins) | 13 | `Valid`, embedded Authenticode; **The QT Company Oy**, DigiCert-issued code-signing certificate |
+| Microsoft Visual C++ DLLs | 10 | `Valid`, embedded Authenticode; **Microsoft Windows Software Compatibility Publisher**, Microsoft-issued chain |
+| `icuuc.dll` | 1 | `Valid`, **Catalog** signature from **Microsoft Windows** in the *GitHub-hosted Windows runner* environment; no embedded Authenticode signature implied |
+| `RcloneBrowser.exe` | 1 | `NotSigned` |
+| `rclone/rclone.exe` | 1 | `NotSigned`, independently upstream-PGP+SHA256-verified during packaging |
+| **Total** | **26** | **24 `Valid`, 2 `NotSigned`, 0 unexpected or invalid signature statuses** |
+
+All 13 Qt DLLs showed the same Qt signer certificate thumbprint (`3D89F77A33C5AD89F45F681848958E755B727C5A`). The 10 Microsoft C++ runtime DLLs showed the Microsoft publisher thumbprint (`2650247AC56048BC7928663C02733D25898A1D6E`). The Windows runner validated `icuuc.dll` through a machine catalog; that outcome may not reproduce on a separate computer without the identical trusted catalog. The catalog result should not be misreported as a directly embedded signature.
+
+Additional evidence from the *same* run: Windows CTest 3/3 passed; pinned rclone upstream PGP signature checked; current Windows ClamAV scan: 70 files, 0 detections; separate historical ClamAV investigation: six pinned outer ZIPs verified, 408 files and 0 detections. The public release job was skipped/disabled.
+
+**Important caveats:** Windows `Valid` identifies an acceptable signature in that runner environment. It does not demonstrate that the source code is benign, guarantee revocation validity on other machines, eliminate Firefox's blocking reputation, or replace app-level code signing. Both `RcloneBrowser.exe` and the bundled `rclone.exe` are unsigned as Windows PE files. The **exact Firefox-blocked ZIP still has not been identified**, so a false-positive conclusion is not justified.
+
+Minor report-cleanup committed afterward: the report formerly contained an initial `result=not_completed` *and* a later `result=audited_signatures_only`, which could be misleading even though the job succeeded. The script now uses `audit_started=true` as a nonterminal marker and writes only the applicable terminal `result=` line. This cleanup has not itself been rerun in GitHub Actions.
