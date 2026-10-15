@@ -10,12 +10,14 @@ private slots:
     int first = 1, second = 2;
     QList<int *> tasks{&first};
     int calls = 0;
+    int sizeSeenBySave = 0;
     QVERIFY(!TaskListTransaction::persist(tasks, &second, [&] {
       ++calls;
-      QCOMPARE(tasks.size(), 2); // serialization sees the proposed list
+      sizeSeenBySave = tasks.size(); // serializer sees the proposed list
       return false;
     }));
     QCOMPARE(calls, 1);
+    QCOMPARE(sizeSeenBySave, 2);
     QCOMPARE(tasks.size(), 1);
     QCOMPARE(tasks.at(0), &first);
   }
@@ -41,10 +43,12 @@ private slots:
   void failedDeletionRestoresOriginalOrdering() {
     int first = 1, second = 2, third = 3;
     QList<int *> tasks{&first, &second, &third};
+    int sizeSeenBySave = 0;
     QVERIFY(!TaskListTransaction::forget(tasks, &second, [&] {
-      QCOMPARE(tasks.size(), 2); // save sees the proposed deletion
+      sizeSeenBySave = tasks.size(); // serializer sees the proposed deletion
       return false;
     }));
+    QCOMPARE(sizeSeenBySave, 2);
     QCOMPARE(tasks.size(), 3);
     QCOMPARE(tasks.at(0), &first);
     QCOMPARE(tasks.at(1), &second);
