@@ -63,6 +63,6 @@ If the project is eventually accepted, its public release and homepage policy mu
 
 Security or signing status must remain clearly marked **unverified** until the necessary independent checks are actually completed.
 
-## Development-only provenance gate (implemented; not yet confirmed by CI)
+## Development-only provenance gate (CI validated; not a release approval)
 
-See [scanned Windows build provenance plan](WINDOWS_BUILD_PROVENANCE_2026-10-15.md). The gate verifies the SHA-256 of the promoted ZIP against the scanner-produced checksum, then requests an OIDC-backed GitHub repository attestation and enforces exact repository, workflow, source commit and branch with the GitHub CLI. **This is not a code-signing certificate or permission to release.**
+See [scanned Windows build provenance plan](WINDOWS_BUILD_PROVENANCE_2026-10-15.md). The gate verifies the SHA-256 of the promoted ZIP against the scanner-produced checksum, then requests an OIDC-backed GitHub repository attestation and enforces exact repository, workflow, source commit and branch with the GitHub CLI. The attestation and its separate CLI verification succeeded on [GitHub run #38746642831](https://github.com/mctransik/RcloneBrowser/actions/runs/38746642831); the exact scanned Windows ZIP SHA-256 is `307c0a783c1ca133173bce180e3b5d5394e8f19d0efcb5e7a6794c2bafca2176`. **This is not a code-signing certificate or permission to release.**

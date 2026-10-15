@@ -1,6 +1,6 @@
 # Scanned Windows ZIP: GitHub build provenance attestation (2026-10-15)
 
-> Status: changes implemented on the development branch; **not yet validated by a GitHub Actions run**. The public release job remains intentionally disabled.
+> Status: **CI validated 2026-10-15** for the exact scanned Windows archive; independent source review, Authenticode signing and Firefox warning investigation remain open. The public release job remains disabled.
 
 ## How the controlled provenance gate works
 
@@ -36,3 +36,28 @@ Replace `<full-commit-sha>` with the complete expected SHA obtained from the int
 - [Firefox malware warning investigation](FIREFOX_MALWARE_HASH_TRIAGE_2026-10-14.md): unresolved, release gate closed.
 - [Draft Windows code-signing policy](CODE_SIGNING_POLICY.md): no code-signing service activated.
 - [GitHub attestation guidance](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations).
+
+## Actual verified outcome — 2026-10-15
+
+Verified from the completed workflow **[run #38746642831](https://github.com/mctransik/RcloneBrowser/actions/runs/38746642831)**, attestation record **[#56288597](https://github.com/mctransik/RcloneBrowser/attestations/56288597)**, and the downloaded text-only Actions report `windows-provenance-verification` (artifact ID `11978323410`), including its `verified-attestation.json`:
+
+| Field | Verified value |
+|---|---|
+| Source commit | `72743bf6e4049a3468284464fdd2838de2067f00` |
+| Repo and source ref | `mctransik/RcloneBrowser`, `refs/heads/feature/cloud-control-ui-mvp` |
+| Build/attestation workflow | `.github/workflows/update.yml` (`workflow_dispatch`) |
+| Source workflow run | `38746642831` (first attempt, GitHub-hosted) |
+| Windows archive being attested | `RcloneBrowser-4.0.2-windows-x64.zip` (the **inner application ZIP**, not outer Actions wrapper) |
+| **Inner application ZIP SHA-256** | `307c0a783c1ca133173bce180e3b5d5394e8f19d0efcb5e7a6794c2bafca2176` |
+| Predicate | `https://slsa.dev/provenance/v1` |
+| Signature transparency timestamp | Sigstore Rekor `2026-10-15T13:58:03Z` |
+| GitHub attestation ID | `56288597` |
+| Scan-to-attestation hash handoff | Passed; exact ZIP SHA-256 matched original ClamAV checksum file |
+| `gh attestation verify` identity restrictions | Passed (repository, workflow, source digest and source ref enforced) |
+| Offline verifier tests | 6/6 passed |
+
+The source identity and subject digest were checked both in the GitHub job log and in the returned signed statement / `verificationResult`. The attest action created a publicly verifiable Sigstore-backed provenance statement. The report archive SHA-256, e.g. `sha256:4e04d2ee8ddbca4049dbcf9453df02e31eb411b9602ae75f5aa7fd8e9a0c8b5d`, is **only the GitHub Actions text-report wrapper**; do not confuse it with the application ZIP hash above.
+
+Same run: Windows tests 3/3 passed; Windows Authenticode 24 valid, 2 unsigned, 0 abnormal; current Windows ClamAV 70 files, **0 detections**; historical ClamAV 408 files, **0 detections**; release job **skipped by policy**.
+
+**Boundaries of the proof:** This proves that the attestation and its embedded signed claim point to the named GitHub Actions workflow and Git commit for the exact same scanned ZIP bytes. It does **not** prove that a different independently audited builder reproduced the binary from source; it is not an EXE publisher signature; it does not prove malware freedom; it does not dismiss Firefox's historical malware warning. The signing step used the development branch and is **not** a release authorization.
