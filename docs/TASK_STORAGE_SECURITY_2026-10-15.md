@@ -1,6 +1,6 @@
 # Saved task data: atomic writes and file permissions (2026-10-15)
 
-**Status: implemented on the development branch; not yet CI-validated.**
+**Status: verified by Windows and Linux CI on 2026-10-15; still not a malware-free or general security certification.**
 
 The legacy tasks.bin task store uses a Qt QDataStream (version Qt_5_2) and includes custom rclone CLI options (JobOptions::extra). These options may contain sensitive user-supplied tokens and passwords. This is **not an encrypted file** and users should avoid putting credentials in saved extra flags.
 
@@ -25,3 +25,11 @@ The legacy tasks.bin task store uses a Qt QDataStream (version Qt_5_2) and inclu
 - Proxy credential storage, command-line argument exposure and log redaction remain separate open reviews. Avoid testing with real production cloud credentials while security assessment is incomplete.
 
 Reference: [Qt QSaveFile class](https://doc.qt.io/qt-6/qsavefile.html).
+
+## CI validation — 2026-10-15
+
+[GitHub Actions run #38755582451](https://github.com/mctransik/RcloneBrowser/actions/runs/38755582451) on development commit `317e0d0e00ce1ff6ba87deeaacc78071064fd229` **passed**. CTest completed **4/4 test suites on Windows** and **4/4 on Linux**, including `task_storage`. The `task_storage` Qt tests exercise serialization compatibility, preservation of the old file on a failed serialization, invalid save destinations, and Unix permission restriction (the latter runs only on Unix). This is simulated regression coverage, not a power-loss hardware test.
+
+The same run reported **24 valid and 2 unsigned** Windows executable/DLL Authenticode statuses (no abnormal statuses); ClamAV scanned **70 files with 0 detections** in the current Windows payload and **408 with 0 detections** in six historical Windows packages. The independently checked GitHub provenance attestation was created for the **exact scanned** Windows application ZIP, digest `f7ad02f528ee5917992e194f949c3665a9b3f2812da98287e50a2e9055696414`. The `release` job remained **disabled/skipped**.
+
+These findings validate the focused task-storage change in the CI environments, not confidentiality of `tasks.bin` as a whole. Plaintext sensitive flags, Windows NTFS ACLs, app-level failure notifications, and the historical Firefox malware warning remain open issues.
