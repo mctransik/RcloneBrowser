@@ -59,3 +59,8 @@ The earlier browser screenshots showed explicit **"Diese Datei enthält einen Vi
 6. Block production release, merge to `main`, and runtime testing of browser-blocked builds until the investigation and release review justify them.
 
 **Result:** Stronger package-level traceability and a narrowed binary difference; **malware status remains unresolved**.
+
+
+## 2026-10-15 — Native Windows Authenticode audit pending CI
+
+The Windows development job now analyzes the assembled `.exe` and `.dll` payload using native `Get-AuthenticodeSignature` and records file hashes, signer details and version metadata in a separate text-only GitHub artifact. Unexpected signature states fail the Windows job. **This is only a newly implemented check, not yet a validated result**; no Windows publisher certificate has been issued for this project. See [Windows signature audit](WINDOWS_AUTHENTICODE_AUDIT_2026-10-15.md). The historical Firefox detection remains unresolved.

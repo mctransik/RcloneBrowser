@@ -173,6 +173,26 @@ jobs:
           Compress-Archive "$dir" "dist\RcloneBrowser-$ver-windows-x64.zip"
           "VERSION=$ver" | Out-File -Append $env:GITHUB_ENV
 
+      # Diagnostic is kept OUTSIDE the ZIP; signed components must verify.
+      # Unsigned project/rclone executables are recorded, not auto-whitelisted
+      # as trustworthy. Invalid signatures block staging and promotion.
+      - name: Audit Windows Authenticode signatures and component metadata
+        shell: pwsh
+        run: |
+          ./scripts/windows_authenticode_audit.ps1 `
+            -PackageDir "dist/RcloneBrowser" `
+            -ReportDir "dist/security/authenticode"
+
+      # Keep text evidence even when a signature check fails. Never upload
+      # executables inside the audit report; ZIP SHA256 is unaffected.
+      - name: Upload Windows Authenticode report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-authenticode-audit
+          path: dist/security/authenticode/
+          if-no-files-found: ignore
+
       # This artifact is NOT security-cleared. It exists only to allow the
       # separate Linux ClamAV job to inspect the exact Windows files.
       # Do not use or distribute this staging artifact.
