@@ -281,6 +281,88 @@ jobs:
           path: staging/RcloneBrowser-${{ env.VERSION }}-windows-x64.zip
           if-no-files-found: error
 
+  windows_provenance:
+    name: Attest and independently verify scanned Windows ZIP (development only)
+    # Keep write-capable OIDC credentials out of normal builds and all PRs.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/cloud-control-ui-mvp' }}
+    needs: [windows_malware_scan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Retrieve only ClamAV-promoted Windows ZIP
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-windows
+          path: provenance-input
+
+      - name: Retrieve original scan checksum
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: clamav-windows-scan-report
+          path: security-scan-report
+
+      - name: Unit-test scan-to-attestation hash handoff
+        run: python3 -m unittest discover -s scripts/tests -p test_verify_windows_scanned_artifact.py -v
+
+      - name: Verify exact scanned ZIP bytes and record digest
+        run: |
+          set -euo pipefail
+          ver="$(head -1 VERSION | tr -d '[:space:]')"
+          archive="provenance-input/RcloneBrowser-${ver}-windows-x64.zip"
+          test "$(find provenance-input -maxdepth 1 -type f | wc -l)" -eq 1
+          python3 scripts/verify_windows_scanned_artifact.py \
+            --checksum security-scan-report/windows-zip.sha256 \
+            --archive "$archive"
+          mkdir -p provenance-report
+          sha256sum "$archive" | tee provenance-report/attested-windows-zip.sha256
+          printf "source_commit=%s\nsource_ref=%s\nworkflow_run_id=%s\nscan_job_status=success\n" \
+            "$GITHUB_SHA" "$GITHUB_REF" "$GITHUB_RUN_ID" > provenance-report/attestation-source.txt
+
+      # Default SLSA build-provenance predicate via short-lived GitHub OIDC
+      # identity, not an Authenticode signature or malware-safety certificate.
+      - name: Generate GitHub provenance attestation for scanned ZIP
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-path: provenance-input/*.zip
+
+      - name: Independently verify attestation and source identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh --version
+          ver="$(head -1 VERSION | tr -d '[:space:]')"
+          archive="provenance-input/RcloneBrowser-${ver}-windows-x64.zip"
+          # The named workflow, source ref and exact source commit are required.
+          # The command cryptographically verifies the identity and subject hash.
+          gh attestation verify "$archive" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/update.yml" \
+            --source-ref "$GITHUB_REF" \
+            --source-digest "$GITHUB_SHA" \
+            --format json > provenance-report/verified-attestation.json
+          printf "verification=passed\nexpected_workflow=.github/workflows/update.yml\n" \
+            >> provenance-report/attestation-source.txt
+          echo "Verified SLSA attestation for exact scanned Windows archive."
+
+      - name: Upload Windows provenance verification evidence (text only)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-provenance-verification
+          path: provenance-report/
+          if-no-files-found: ignore
+
+
   linux:
     name: Linux
     runs-on: ubuntu-24.04
