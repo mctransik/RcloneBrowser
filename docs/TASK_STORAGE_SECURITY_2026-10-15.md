@@ -34,7 +34,7 @@ The same run reported **24 valid and 2 unsigned** Windows executable/DLL Authent
 
 These findings validate the focused task-storage change in the CI environments, not confidentiality of `tasks.bin` as a whole. Plaintext sensitive flags, Windows NTFS ACLs, app-level failure notifications, and the historical Firefox malware warning remain open issues.
 
-## Visible write errors and transactional task list (implemented; CI pending)
+## Visible write errors and transactional task list (Windows and Linux CI validated)
 
 The original saved-task GUI closed the transfer dialog after calling `Persist` even when `QSaveFile` reported failure. Deleting a task also removed it from the in-memory list before a disk commit, without restoring it on error. Edited task fields were mutated on the shared `JobOptions` instance before a failed save.
 
@@ -47,3 +47,11 @@ The focused update now:
 - Adds a Qt test suite for successful and failed append/delete transactions, list ordering, repeated task save and invalid/null operations, with synthetic data only.
 
 **Limits:** These tests exercise in-memory transactional behavior and failed-write simulation, not the complete interactive Qt dialog; manual GUI checking with disposable tasks remains necessary. The prior task-storage tests still exercise actual `QSaveFile` behavior. No encryption is added, and nothing here resolves the historical Firefox malware alert. Release remains disabled.
+
+### CI result for the save/delete error-handling change
+
+[Run #38766022416](https://github.com/mctransik/RcloneBrowser/actions/runs/38766022416) completed **successfully** on commit `9f729b254b504dadc16c7aafc63e3108c3a60e3a`. Both Windows and Linux passed **all 5 CTest suites**, including `task_storage` and new `task_list_transaction`; the latter contains seven test methods for successes and failed saves/deletions, original ordering, existing tasks and invalid entries. The test suite success is not proof of a full manual GUI pass.
+
+The current Windows ClamAV scan reported **70 files, 0 detections** and the pinned historical ClamAV audit reported **408 files, 0 detections**; Authenticode inventory recorded **24 valid, 2 unsigned, 0 abnormal** for the Windows EXE/DLL files. The development Windows archive was attested under [GitHub attestation #56339440](https://github.com/mctransik/RcloneBrowser/attestations/56339440), with independently verified SHA-256 `42acba048d41f030d33c14624bc0f4cb4ffe8a31392416c0d80fab613699f473`. The release job was **skipped** as required.
+
+The user-visible failure dialogs, edit restoration and rollback logic therefore passed CI compilation and unit tests. Runtime GUI interactions, disk failure under real Windows ACL conditions, and all other security review items remain to be validated independently. The prior Firefox malware classification is not resolved by scan counts or attestation.
