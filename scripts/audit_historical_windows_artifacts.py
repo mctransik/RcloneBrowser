@@ -8,6 +8,7 @@ GitHub token is forwarded only to api.github.com, not the blob redirect.
 from __future__ import annotations
 
 import hashlib
+import csv
 import os
 from pathlib import Path, PurePosixPath
 import shutil
@@ -112,6 +113,29 @@ def extract_safely(source: Path, dest: Path) -> tuple[int, int]:
                     raise RuntimeError("Historical archive member size mismatch")
     return count, total
 
+def collect_windows_pe_hashes(root: Path) -> list[tuple[str, int, str]]:
+    """Hash packaged Windows EXE/DLL bytes without executing them."""
+    result: list[tuple[str, int, str]] = []
+    for file in sorted(root.rglob("*")):
+        if not file.is_file() or file.suffix.lower() not in (".exe", ".dll"):
+            continue
+        rel = file.relative_to(root).as_posix()
+        result.append((rel, file.stat().st_size, sha256(file)))
+    if not any(Path(p).name.lower() == "rclonebrowser.exe" for p, _, _ in result):
+        raise RuntimeError("Historical package lacks RcloneBrowser.exe")
+    if not any(p.lower().endswith("rclone/rclone.exe") for p, _, _ in result):
+        raise RuntimeError("Historical package lacks bundled rclone.exe")
+    if not any(p.lower().endswith(".dll") for p, _, _ in result):
+        raise RuntimeError("Historical package lacks DLL dependencies")
+    return result
+
+def write_tsv(path: Path, header: tuple[str, ...], rows: list[tuple]) -> None:
+    # Output only metadata, never binary samples.
+    with path.open("w", encoding="utf-8", newline="") as output:
+        writer = csv.writer(output, delimiter="\t", lineterminator="\n")
+        writer.writerow(header)
+        writer.writerows(rows)
+
 def main() -> int:
     token = os.environ.get("GH_TOKEN", "").strip()
     if not token:
@@ -126,6 +150,13 @@ def main() -> int:
         "Run IDs are candidates based on signed URL validity, not proven flagged samples",
     ]
     report = reports / "historical-artifact-hashes.txt"
+    pe_report = reports / "historical-windows-pe-sha256.tsv"
+    unique_report = reports / "historical-windows-unique-pe-sha256.tsv"
+    pe_rows: list[tuple[str, int, int, str, int, str]] = []
+    unique: dict[str, dict[str, object]] = {}
+    write_tsv(pe_report,
+              ("date", "run_id", "artifact_id", "relative_path", "size_bytes", "sha256"),
+              pe_rows)
     try:
         for date, run, artifact_id, expected in SAMPLES:
             archive = base / f"{run}-{artifact_id}.zip"
@@ -136,7 +167,18 @@ def main() -> int:
                 raise RuntimeError(
                     f"Artifact SHA mismatch for run {run}: expected {expected}, got {actual}"
                 )
-            entries, expanded = extract_safely(archive, base / f"extracted-{run}")
+            extracted = base / f"extracted-{run}"
+            entries, expanded = extract_safely(archive, extracted)
+            for path, size, digest in collect_windows_pe_hashes(extracted):
+                pe_rows.append((date, run, artifact_id, path, size, digest))
+                entry = unique.setdefault(digest, {"size": size, "paths": set(), "runs": set()})
+                if entry["size"] != size:
+                    raise RuntimeError("Same SHA-256 digest unexpectedly has different file sizes")
+                entry["paths"].add(path)
+                entry["runs"].add(run)
+            write_tsv(pe_report,
+                      ("date", "run_id", "artifact_id", "relative_path", "size_bytes", "sha256"),
+                      pe_rows)
             lines.append(
                 f"date={date} run={run} artifact_id={artifact_id} "
                 f"sha256={actual} members={entries} extracted_bytes={expanded} "
@@ -144,7 +186,19 @@ def main() -> int:
             )
             report.write_text("\n".join(lines) + "\n", encoding="utf-8")
             print(f"Hash verified, {entries} ZIP members. No member executed.")
-        print("All six pinned outer ZIP SHA-256 values verified.")
+        unique_rows = [
+            (digest, entry["size"], len(entry["runs"]),
+             ",".join(str(x) for x in sorted(entry["runs"])),
+             ";".join(sorted(entry["paths"])))
+            for digest, entry in sorted(unique.items())
+        ]
+        write_tsv(unique_report,
+                  ("sha256", "size_bytes", "run_count", "run_ids", "relative_paths"),
+                  unique_rows)
+        lines.append(f"inner_exe_dll_entries={len(pe_rows)}")
+        lines.append(f"unique_inner_exe_dll_sha256={len(unique_rows)}")
+        print(f"All six outer ZIP hashes verified; {len(pe_rows)} EXE/DLL file instances; "
+              f"{len(unique_rows)} unique EXE/DLL hashes. Nothing executed.")
         return 0
     finally:
         report.write_text("\n".join(lines) + "\n", encoding="utf-8")

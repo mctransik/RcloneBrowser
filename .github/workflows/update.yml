@@ -380,6 +380,9 @@ jobs:
           sudo freshclam --stdout
           clamscan --version
 
+      - name: Unit-test Windows binary hash reporting
+        run: python3 -m unittest discover -s scripts/tests -p test_historical_artifact_hashes.py -v
+
       - name: Verify exact historical GitHub Actions ZIPs without execution
         env:
           GH_TOKEN: ${{ github.token }}
