@@ -27,6 +27,7 @@ set(SOURCES
   utils.cpp utils.h
   job_options.cpp job_options.h
   list_of_job_options.cpp list_of_job_options.h
+  task_storage.cpp task_storage.h
   pch.h
   resources.qrc
 )
@@ -108,6 +109,14 @@ if(RB_BUILD_TESTS)
     target_link_libraries(test_rclone_output PRIVATE Qt::Core Qt::Test)
     set_target_properties(test_rclone_output PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME rclone_output COMMAND test_rclone_output)
+
+    add_executable(test_task_storage ../tests/test_task_storage.cpp
+                   task_storage.cpp task_storage.h)
+    target_include_directories(test_task_storage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_task_storage PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_task_storage PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME task_storage COMMAND test_task_storage)
 
     add_executable(test_credential_safety ../tests/test_credential_safety.cpp credential_safety.h)
     target_include_directories(test_credential_safety PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
