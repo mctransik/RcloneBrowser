@@ -1,4 +1,5 @@
 #include "job_widget.h"
+#include "log_safety.h"
 #include "rclone_output.h"
 #include "theme.h"
 #include "utils.h"
@@ -77,7 +78,8 @@ JobWidget::JobWidget(QProcess *process, const QString &info,
     using RcloneOutput::StatsLine;
 
     while (mProcess->canReadLine()) {
-      QString line = QString::fromUtf8(mProcess->readLine()).trimmed();
+      QString line = LogSafety::maskKnownCredentials(
+          QString::fromUtf8(mProcess->readLine()).trimmed());
       if (++mLines == 10000) {
         ui.output->clear();
         mLines = 1;

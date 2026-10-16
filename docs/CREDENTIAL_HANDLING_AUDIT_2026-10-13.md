@@ -26,3 +26,11 @@
 4. Add automated tests (mock rclone + disposable credentials) and manual Windows GUI checks, including clipboard cancel/confirm behavior and password prompt at offset zero.
 
 The current fixes are deliberately narrow. They do not prove confidentiality across the complete application and do not resolve the Firefox malware warning.
+
+## 2026-10-16 — Best-effort masking of displayed rclone output (CI pending)
+
+The code previously appended unfiltered output from rclone transfer, mount and stream processes to visible logs; the built-in updater likewise included up to 400 raw characters from failed `rclone selfupdate` stderr in a user-visible error. This creates a **potential** credential disclosure channel, not evidence of real data loss.
+
+The development change adds `LogSafety::maskKnownCredentials` **only for UI presentation**: process-output lines in `JobWidget`, `MountWidget` and `StreamWidget`, and updater error details. It masks common HTTP(S)/SOCKS proxy URL userinfo, selected URL token/password query keys, Basic/Bearer Authorization headers, selected environment assignments, and explicit common CLI secret flags. Qt tests contain invented values only. rclone commands, PGP update checks and remote operations remain unchanged.
+
+**Limitations:** This is *not* comprehensive secret detection or a guarantee that any output is safe to share. Vendor-specific signature query fields, arbitrary token formats, file/remote names and paths can remain sensitive. `ProgressDialog` receives arbitrarily split chunks rather than complete lines; it is **not yet covered** to avoid a partial-token leak masquerading as protection or unintentionally changing `outputAvailable` behavior. The app-wide proxy variables in `main.cpp`, process-lifetime encrypted config password, saved task extra flags, and portable settings still require separate investigation. No real credentials were read or submitted. The Firefox malware warning is unresolved; public release stays disabled.

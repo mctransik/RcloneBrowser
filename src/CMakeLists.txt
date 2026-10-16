@@ -16,6 +16,7 @@ set(SOURCES
   job_widget.cpp job_widget.h job_widget.ui
   proxy_credentials.cpp proxy_credentials.h
   credential_safety.h
+  log_safety.cpp log_safety.h
   mount_widget.cpp mount_widget.h mount_widget.ui
   stream_widget.cpp stream_widget.h stream_widget.ui
   preferences_dialog.cpp preferences_dialog.h preferences_dialog.ui
@@ -110,6 +111,14 @@ if(RB_BUILD_TESTS)
     target_link_libraries(test_rclone_output PRIVATE Qt::Core Qt::Test)
     set_target_properties(test_rclone_output PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME rclone_output COMMAND test_rclone_output)
+
+    add_executable(test_log_safety ../tests/test_log_safety.cpp
+                   log_safety.cpp log_safety.h)
+    target_include_directories(test_log_safety PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_log_safety PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_log_safety PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME log_safety COMMAND test_log_safety)
 
     add_executable(test_task_storage ../tests/test_task_storage.cpp
                    task_storage.cpp task_storage.h)

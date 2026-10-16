@@ -1,4 +1,5 @@
 #include "rclone_updater.h"
+#include "log_safety.h"
 #include "utils.h"
 #include "proxy_credentials.h"
 
@@ -337,7 +338,7 @@ void RcloneUpdater::install(const QString &version) {
               fail(tr("Signed rclone update was rejected (exit %1): %2. "
                       "The installed copy was not changed.")
                        .arg(exitCode)
-                       .arg(details));
+                       .arg(LogSafety::maskKnownCredentials(details)));
               return;
             }
             if (!QFileInfo(output).isFile()) {
