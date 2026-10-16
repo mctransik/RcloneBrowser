@@ -1,5 +1,8 @@
 #include "proxy_process_environment.h"
 #include <QtTest>
+#include <QCoreApplication>
+#include <QDir>
+#include <QProcess>
 
 class TestProxyProcessEnvironment : public QObject {
   Q_OBJECT
@@ -68,6 +71,44 @@ private slots:
     QCOMPARE(env.value("RCLONE_CONFIG_PASS"), QString("mock-password"));
     QVERIFY(!base.contains("RCLONE_CONFIG_PASS"));
     QVERIFY(!env.contains("HTTP_PROXY"));
+  }
+
+  void spawnedRcloneProcessReceivesOnlyItsScopedEnvironment() {
+    // Real QProcess integration smoke test, with invented values only.
+    const QProcessEnvironment parent = QProcessEnvironment::systemEnvironment();
+    ProxyProcessEnvironment::Configuration p;
+    p.enabled = true;
+    p.http = QStringLiteral("http://fakeuser:fakepass@proxy.invalid:10080");
+    p.https = QStringLiteral("http://fakeuser:fakepass2@proxy.invalid:10443");
+    const QString executable =
+        QDir(QCoreApplication::applicationDirPath()).filePath(
+#ifdef Q_OS_WIN
+            QStringLiteral("proxy_env_probe.exe")
+#else
+            QStringLiteral("proxy_env_probe")
+#endif
+        );
+
+    QProcess rclone;
+    rclone.setProcessEnvironment(ProxyProcessEnvironment::forRclone(
+        parent, p, QStringLiteral("fake-rclone-config-password")));
+    rclone.start(executable, {QStringLiteral("--scoped")});
+    QVERIFY2(rclone.waitForStarted(10000), "Synthetic rclone probe did not start");
+    QVERIFY2(rclone.waitForFinished(10000), "Synthetic rclone probe did not finish");
+    QCOMPARE(rclone.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(rclone.exitCode(), 0);
+
+    // Emulate an unrelated external program launched by the GUI.
+    QProcess external;
+    external.setProcessEnvironment(parent);
+    external.start(executable, {QStringLiteral("--external")});
+    QVERIFY2(external.waitForStarted(10000), "External probe did not start");
+    QVERIFY2(external.waitForFinished(10000), "External probe did not finish");
+    QCOMPARE(external.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(external.exitCode(), 0);
+
+    // The running test process (representing the GUI) is unchanged.
+    QCOMPARE(QProcessEnvironment::systemEnvironment(), parent);
   }
 
   void externalSystemProxyStillInheritedByRclone() {

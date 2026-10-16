@@ -1,4 +1,5 @@
 #include "transfer_dialog.h"
+#include "task_secret_risk.h"
 #include "list_of_job_options.h"
 #include "utils.h"
 
@@ -97,6 +98,23 @@ TransferDialog::TransferDialog(bool isDownload, bool isDrop,
       QMessageBox::warning(this, "Error",
                            "Invalid Task, source and destination required!");
       return;
+    }
+    // tasks.bin uses a plain QDataStream, not encryption. Warn before
+    // changing an existing task in memory or writing anything to disk.
+    // The warning deliberately does not echo the suspected secret.
+    if (TaskSecretRisk::mayContainCredentials(
+            ui.textExtra->text(), ui.textSource->text(), ui.textDest->text())) {
+      if (QMessageBox::warning(
+              this, tr("Unencrypted saved task"),
+              tr("These task options or paths may contain a password, token, "
+                 "or authenticated URL. Saved tasks are NOT encrypted: anyone "
+                 "who can read tasks.bin may recover these values.\n\n"
+                 "Prefer storing credentials in an encrypted rclone "
+                 "configuration rather than in task arguments.\n\n"
+                 "Save this task anyway?"),
+              QMessageBox::Save | QMessageBox::Cancel,
+              QMessageBox::Cancel) != QMessageBox::Save)
+        return;
     }
     // In edit mode getJobOptions() updates the original in-memory record.
     // Preserve its prior state so a failed disk write does not leave an

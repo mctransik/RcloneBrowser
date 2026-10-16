@@ -31,6 +31,7 @@ set(SOURCES
   list_of_job_options.cpp list_of_job_options.h
   task_storage.cpp task_storage.h
   task_list_transaction.h
+  task_secret_risk.h
   pch.h
   resources.qrc
 )
@@ -129,6 +130,14 @@ if(RB_BUILD_TESTS)
                           RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME task_storage COMMAND test_task_storage)
 
+    add_executable(test_task_secret_risk
+                   ../tests/test_task_secret_risk.cpp task_secret_risk.h)
+    target_include_directories(test_task_secret_risk PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_task_secret_risk PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_task_secret_risk PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME task_secret_risk COMMAND test_task_secret_risk)
+
     add_executable(test_task_list_transaction
                    ../tests/test_task_list_transaction.cpp task_list_transaction.h)
     target_include_directories(test_task_list_transaction PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -143,6 +152,11 @@ if(RB_BUILD_TESTS)
     set_target_properties(test_credential_safety PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME credential_safety COMMAND test_credential_safety)
 
+    add_executable(proxy_env_probe ../tests/proxy_env_probe.cpp)
+    target_link_libraries(proxy_env_probe PRIVATE Qt::Core)
+    set_target_properties(proxy_env_probe PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+
     add_executable(test_proxy_process_environment
                    ../tests/test_proxy_process_environment.cpp
                    proxy_process_environment.h)
@@ -150,6 +164,7 @@ if(RB_BUILD_TESTS)
     target_link_libraries(test_proxy_process_environment PRIVATE Qt::Core Qt::Test)
     set_target_properties(test_proxy_process_environment PROPERTIES
                           RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_dependencies(test_proxy_process_environment proxy_env_probe)
     add_test(NAME proxy_process_environment COMMAND test_proxy_process_environment)
 
     add_executable(test_proxy_credentials ../tests/test_proxy_credentials.cpp
