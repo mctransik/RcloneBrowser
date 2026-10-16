@@ -35,6 +35,14 @@ The development change adds `LogSafety::maskKnownCredentials` **only for UI pres
 
 **Limitations:** This is *not* comprehensive secret detection or a guarantee that any output is safe to share. Vendor-specific signature query fields, arbitrary token formats, file/remote names and paths can remain sensitive. `ProgressDialog` receives arbitrarily split chunks rather than complete lines; it is **not yet covered** to avoid a partial-token leak masquerading as protection or unintentionally changing `outputAvailable` behavior. The app-wide proxy variables in `main.cpp`, process-lifetime encrypted config password, saved task extra flags, and portable settings still require separate investigation. No real credentials were read or submitted. The Firefox malware warning is unresolved; public release stays disabled.
 
-### First CI regression and fix (2026-10-16; rerun pending)
+### First CI regression and fix (2026-10-16; rerun verified)
 
 [Run #38881049730](https://github.com/mctransik/RcloneBrowser/actions/runs/38881049730) compiled successfully on both Windows and Linux but passed only **5/6 CTest suites**; `log_safety` failed because the named-assignment masking expression consumed `&v=2` and further URL parameters after an already-masked query token. This was a **non-secret content integrity defect** detected by the new regression test. The assignment pattern now stops at URL query delimiters (`&`, `?`, `#`), keeping non-secret fields and separately masking subsequent secret fields. Added exact-output tests for query-field ordering and chained assignments. New Windows/Linux CI, Windows malware scanning and provenance checks must pass before claiming this fix validated. **No publication**.
+
+### Verified second CI run (2026-10-16)
+
+[Run #38885704340](https://github.com/mctransik/RcloneBrowser/actions/runs/38885704340) completed successfully on development commit `4109b2ad2f53035269543bcc57e33c9d2cc76846`. All **6/6 CTest suites passed** on Windows and Linux, including the updated `log_safety` suite with eight synthetic-credential test methods. No runtime Windows GUI injection testing has yet been performed.
+
+Windows Authenticode audit recorded **26 EXE/DLL files, 24 valid signatures, 2 unsigned files, 0 abnormal results**. ClamAV scanned **70 current files (0 detections)** and **408 historical files (0 detections)** using 3,628,169 signatures. The exact scanned Windows archive has independently verified SHA-256 `ccb943daa371132a888743678ec1c6aa632dc077080cc8a25fe0b318c3ec01f7` and [GitHub provenance attestation #56619377](https://github.com/mctransik/RcloneBrowser/attestations/56619377); CI verified the attestation's source identity. The release job was skipped by design.
+
+These checks demonstrate the test/build and scan pipeline passed; they cannot certify malware absence, all-log confidentiality or resolved Firefox download classification. The public release gate remains disabled.
