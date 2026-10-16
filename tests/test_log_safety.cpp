@@ -17,7 +17,24 @@ private slots:
         QStringLiteral("https://host.test/?access_token=verysecret&v=2&client_secret=hidden"));
     QVERIFY(!s.contains(QStringLiteral("verysecret")));
     QVERIFY(!s.contains(QStringLiteral("hidden")));
-    QVERIFY(s.contains(QStringLiteral("&v=2")));
+    QVERIFY(s.contains(QStringLiteral("&v=2&client_secret=[REDACTED]")));
+    QVERIFY(s.contains(QStringLiteral("?access_token=[REDACTED]")));
+  }
+  void leavesUnrelatedQueryParameterOrderIntact() {
+    const QString s = LogSafety::maskKnownCredentials(
+        QStringLiteral("https://host.test/p?token=abcdef&file=report.pdf"
+                       "&password=hidden123&version=2#section"));
+    QCOMPARE(s, QStringLiteral(
+        "https://host.test/p?token=[REDACTED]&file=report.pdf"
+        "&password=[REDACTED]&version=2#section"));
+  }
+  void masksAssignmentWithoutConsumingNextUrlParameter() {
+    const QString s = LogSafety::maskKnownCredentials(
+        QStringLiteral("RCLONE_CONFIG_PASS=abcdef&mode=test "
+                       "token=supersecret&v=4"));
+    QCOMPARE(s, QStringLiteral(
+        "RCLONE_CONFIG_PASS=[REDACTED]&mode=test "
+        "token=[REDACTED]&v=4"));
   }
   void masksAuthHeadersAndEnvironment() {
     const QString s = LogSafety::maskKnownCredentials(

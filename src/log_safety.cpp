@@ -21,8 +21,10 @@ QString maskKnownCredentials(const QString &text) {
       QRegularExpression::CaseInsensitiveOption);
   output.replace(authorization, QStringLiteral("\\1[REDACTED]"));
 
+  // Stop at query-string delimiters, otherwise a masked access_token
+  // assignment also swallows unrelated parameters such as &version=2.
   static const QRegularExpression assignments(
-      QStringLiteral(R"rx(\b((?:RCLONE_CONFIG_PASS|AWS_SECRET_ACCESS_KEY|RCLONE_[A-Z0-9_]+_TOKEN|access_token|refresh_token|client_secret|api_key|password|token)\s*=\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+))rx"),
+      QStringLiteral(R"rx(\b((?:RCLONE_CONFIG_PASS|AWS_SECRET_ACCESS_KEY|RCLONE_[A-Z0-9_]+_TOKEN|access_token|refresh_token|client_secret|api_key|password|token)\s*=\s*)(?:"[^"]*"|'[^']*'|[^\s,;&?#]+))rx"),
       QRegularExpression::CaseInsensitiveOption);
   output.replace(assignments, QStringLiteral("\\1[REDACTED]"));
 
