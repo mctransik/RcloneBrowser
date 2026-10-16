@@ -26,7 +26,7 @@ inline bool mayContainCredentials(const QString &extra,
       QRegularExpression::CaseInsensitiveOption);
   static const QRegularExpression authHeader(
       QStringLiteral(
-          R"rx((?:Proxy-)?Authorization\s*:\s*(?:Bearer|Basic)\b)rx"),
+          R"rx((?:(?:Proxy-)?Authorization\s*:\s*(?:Bearer|Basic)\b|X-(?:Api-Key|Auth-Token)\s*:))rx"),
       QRegularExpression::CaseInsensitiveOption);
 
   return secretFlag.match(all).hasMatch() || credentialUrl.match(all).hasMatch() ||

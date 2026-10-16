@@ -108,7 +108,8 @@ private slots:
     QCOMPARE(external.exitCode(), 0);
 
     // The running test process (representing the GUI) is unchanged.
-    QCOMPARE(QProcessEnvironment::systemEnvironment(), parent);
+    QCOMPARE(QProcessEnvironment::systemEnvironment().toStringList(),
+             parent.toStringList());
   }
 
   void externalSystemProxyStillInheritedByRclone() {

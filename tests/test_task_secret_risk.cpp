@@ -29,6 +29,10 @@ private slots:
     QVERIFY(TaskSecretRisk::mayContainCredentials(
         "--header Authorization: Bearer invented.jwt.token", "a:", "b:"));
   }
+  void apiKeyHeaderWarns() {
+    QVERIFY(TaskSecretRisk::mayContainCredentials(
+        "--header X-Api-Key: synthetic-value", "remote:", "local:"));
+  }
   void harmlessFilenameWithAtDoesNotWarn() {
     QVERIFY(!TaskSecretRisk::mayContainCredentials(
         "", "C:/files/report@work.txt", "remote:report@work.txt"));
