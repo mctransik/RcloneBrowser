@@ -15,6 +15,7 @@ set(SOURCES
   progress_dialog.cpp progress_dialog.h progress_dialog.ui
   job_widget.cpp job_widget.h job_widget.ui
   proxy_credentials.cpp proxy_credentials.h
+  proxy_process_environment.h
   credential_safety.h
   log_safety.cpp log_safety.h
   mount_widget.cpp mount_widget.h mount_widget.ui
@@ -141,6 +142,15 @@ if(RB_BUILD_TESTS)
     target_link_libraries(test_credential_safety PRIVATE Qt::Core Qt::Test)
     set_target_properties(test_credential_safety PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME credential_safety COMMAND test_credential_safety)
+
+    add_executable(test_proxy_process_environment
+                   ../tests/test_proxy_process_environment.cpp
+                   proxy_process_environment.h)
+    target_include_directories(test_proxy_process_environment PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_proxy_process_environment PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_proxy_process_environment PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME proxy_process_environment COMMAND test_proxy_process_environment)
 
     add_executable(test_proxy_credentials ../tests/test_proxy_credentials.cpp
                    proxy_credentials.cpp proxy_credentials.h)

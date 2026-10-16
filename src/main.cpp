@@ -97,12 +97,10 @@ int main(int argc, char *argv[]) {
                                 .arg(error));
       return 1;
     }
-    qputenv("HTTP_PROXY", httpProxy.toUtf8());
-    qputenv("http_proxy", httpProxy.toUtf8());
-    qputenv("HTTPS_PROXY", httpsProxy.toUtf8());
-    qputenv("https_proxy", httpsProxy.toUtf8());
-    qputenv("NO_PROXY", settings->value("Settings/no_proxy").toByteArray());
-    qputenv("no_proxy", settings->value("Settings/no_proxy").toByteArray());
+    // Avoid making stored proxy credentials part of the GUI-wide
+    // environment inherited by unrelated subprocesses.
+    SetRcloneProxy(true, httpProxy, httpsProxy,
+                   settings->value("Settings/no_proxy").toString());
   }
 
   // remmber darkMode state on app startup

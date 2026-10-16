@@ -166,6 +166,11 @@ MainWindow::MainWindow() {
       settings->setValue("Settings/useProxy", dialog.getUseProxy());
       settings->setValue("Settings/no_proxy", dialog.getNoProxy().trimmed());
 
+      // Use the new proxy configuration for future rclone processes without
+      // modifying the environment inherited by other child programs.
+      SetRcloneProxy(dialog.getUseProxy(), http, https,
+                     dialog.getNoProxy().trimmed());
+
       SetRclone(dialog.getRclone());
       SetRcloneConf(dialog.getRcloneConf());
       mFirstTime = true;
