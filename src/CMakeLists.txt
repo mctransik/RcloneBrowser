@@ -31,7 +31,7 @@ set(SOURCES
   list_of_job_options.cpp list_of_job_options.h
   task_storage.cpp task_storage.h
   task_list_transaction.h
-  task_secret_risk.h
+  task_secret_risk.cpp task_secret_risk.h
   pch.h
   resources.qrc
 )
@@ -131,7 +131,8 @@ if(RB_BUILD_TESTS)
     add_test(NAME task_storage COMMAND test_task_storage)
 
     add_executable(test_task_secret_risk
-                   ../tests/test_task_secret_risk.cpp task_secret_risk.h)
+                   ../tests/test_task_secret_risk.cpp
+                   task_secret_risk.cpp task_secret_risk.h)
     target_include_directories(test_task_secret_risk PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(test_task_secret_risk PRIVATE Qt::Core Qt::Test)
     set_target_properties(test_task_secret_risk PROPERTIES
