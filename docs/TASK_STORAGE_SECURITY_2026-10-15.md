@@ -69,3 +69,17 @@ An additional source audit reconfirmed that `tasks.bin` preserves `JobOptions::e
 ### CI confirmation: heuristic save-time warning (2026-10-16)
 
 [Development run #38939172244](https://github.com/mctransik/RcloneBrowser/actions/runs/38939172244) succeeded at source commit `44b95c5725f76f3278990cc8f9dacc20773c0313`. Windows and Linux both passed **8/8 CTest suites**, including `task_secret_risk` and its nine synthetic test methods. Moving the regex code from the moc-parsed header into `task_secret_risk.cpp` fixed the prior compilation failure. The warning remains cancel-default before writes, without echoing suspected secret values; `tasks.bin` is **still unencrypted** and this is **not** proof that arbitrary secrets will always be detected. Manual GUI checking and a longer-term protected-storage design remain outstanding. The release remains disabled.
+
+## 2026-10-17 — Windows DPAPI envelope prototype (CI pending)
+
+A stand-alone **DPAPI task-envelope codec** was introduced in
+`src/task_protection.{h,cpp}` with Qt regression tests and the `crypt32`
+Windows link dependency. It protects arbitrary task-stream bytes under the
+**current Windows user** with a versioned outer marker and checks for
+unknown versions and malformed ciphertext. On Linux it rejects requests,
+rather than silently falling back to plaintext. The application *does not
+yet call this codec* for `tasks.bin` and does not migrate existing files.
+
+See [migration/recovery design](TASK_ENCRYPTION_DESIGN_2026-10-17.md).
+No confidentiality claim or release authorization is made until the
+reader, recovery handling, user opt-in, and runtime testing are complete.

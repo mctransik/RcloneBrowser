@@ -32,6 +32,7 @@ set(SOURCES
   task_storage.cpp task_storage.h
   task_list_transaction.h
   task_secret_risk.cpp task_secret_risk.h
+  task_protection.cpp task_protection.h
   pch.h
   resources.qrc
 )
@@ -99,7 +100,7 @@ target_link_libraries(${TARGET_NAME} PRIVATE
   Qt::Core Qt::Gui Qt::Widgets Qt::Network Qt::Svg)
 
 if(WIN32)
-  target_link_libraries(${TARGET_NAME} PRIVATE shell32 ole32 dwmapi advapi32)
+  target_link_libraries(${TARGET_NAME} PRIVATE shell32 ole32 dwmapi advapi32 crypt32)
 endif()
 
 # Parser unit tests (no GUI, no rclone needed).
@@ -129,6 +130,17 @@ if(RB_BUILD_TESTS)
     set_target_properties(test_task_storage PROPERTIES
                           RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME task_storage COMMAND test_task_storage)
+
+    add_executable(test_task_protection ../tests/test_task_protection.cpp
+                   task_protection.cpp task_protection.h)
+    target_include_directories(test_task_protection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_task_protection PRIVATE Qt::Core Qt::Test)
+    if(WIN32)
+      target_link_libraries(test_task_protection PRIVATE crypt32)
+    endif()
+    set_target_properties(test_task_protection PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME task_protection COMMAND test_task_protection)
 
     add_executable(test_task_secret_risk
                    ../tests/test_task_secret_risk.cpp
