@@ -83,3 +83,11 @@ yet call this codec* for `tasks.bin` and does not migrate existing files.
 See [migration/recovery design](TASK_ENCRYPTION_DESIGN_2026-10-17.md).
 No confidentiality claim or release authorization is made until the
 reader, recovery handling, user opt-in, and runtime testing are complete.
+
+### Development DPAPI codec CI result — 2026-10-17
+
+[GitHub Actions run #39015169327](https://github.com/mctransik/RcloneBrowser/actions/runs/39015169327) on development commit `f77c8f6bbff09089bd824b61503ae59d535f1298` **succeeded**. Windows and Linux each passed **all 9/9 CTest suites**, including new `task_protection` alongside earlier task, proxy and credential tests. The Windows DPAPI codec compiles and passes the synthetic encryption/decryption and tamper tests; Linux compiles it and passes its platform-unavailable test path. The tests do not exercise actual application migration or an interactive GUI.
+
+The current Windows ClamAV job scanned **70 files, 0 detections** and the historical job scanned **408 files, 0 detections**, using **3,628,169** known signatures. Windows Authenticode inventory reported **26 EXE/DLL: 24 valid, 2 unsigned, 0 abnormal**. Exact scanned Windows ZIP SHA-256: `d53dcd1524afb44420113e6d49e79dfdea3ea44e7b56a7e5635340c2335a605d`; [GitHub provenance attestation #56912537](https://github.com/mctransik/RcloneBrowser/attestations/56912537) was independently verified by CI. Public release job **skipped**.
+
+**Not a general security clearance:** Existing `tasks.bin` remains unencrypted, no migration occurs, portable/password-based encryption and fail-closed recovery are not implemented, and previous Firefox malware warning remains unresolved. Avoid overriding browser/antivirus warnings to run the developer build.
