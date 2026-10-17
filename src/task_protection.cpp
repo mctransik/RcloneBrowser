@@ -3,7 +3,9 @@
 #include <QByteArray>
 
 #ifdef Q_OS_WIN
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <wincrypt.h>
 #include <limits>
@@ -121,19 +123,18 @@ bool decryptForWindowsUser(const QByteArray &stored, QByteArray *plaintext,
     return fail(error, QStringLiteral(
         "Unable to decrypt saved tasks for this Windows user."));
   }
-  const QByteArray framed(reinterpret_cast<const char *>(decoded.pbData),
-                          static_cast<qsizetype>(decoded.cbData));
+  QByteArray framed(reinterpret_cast<const char *>(decoded.pbData),
+                    static_cast<qsizetype>(decoded.cbData));
   SecureZeroMemory(decoded.pbData, decoded.cbData);
   LocalFree(decoded.pbData);
   if (!framed.startsWith(kInnerMarker)) {
-    // Do not disclose any decoded data on failed domain/format checks.
-    QByteArray toErase = framed;
-    zeroMemory(&toErase);
+    // Do not disclose decoded data on failed domain/format checks.
+    zeroMemory(&framed);
     return fail(error, QStringLiteral("Protected task format is invalid."));
   }
   *plaintext = framed.mid(kInnerMarker.size());
-  // Qt's implicit sharing may retain an additional copy; this codec minimizes
-  // temporary exposure but cannot guarantee all in-memory copies are wiped.
+  zeroMemory(&framed); // best-effort erase of our temporary plaintext copy
+  // Qt may allocate additional implicit copies; secure erasure is not guaranteed.
   if (error) error->clear();
   return true;
 #endif
