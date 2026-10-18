@@ -1,6 +1,6 @@
 # Windows package-content and accidental-secret safeguard (2026-10-18)
 
-> Status: **code committed, CI pending**. This gate does **not** claim to detect all secret types or malware; releases remain disabled.
+> Status: **CI-validated on 2026-10-18**, run #39137148599. This gate does **not** claim to detect all secret types or malware; releases remain disabled.
 
 ## Rationale
 
@@ -50,8 +50,33 @@ manifest, unexpected hidden directory and linked file.
   compressed formats or PDF bytes.
 - The manifest comes from the same build process; matching hashes
   prove internal consistency, not independent publisher authenticity.
-- CI tests have **not run** at the time of this commit. Their success
-  must be confirmed from a development workflow before treating this
-  gate as enforced.
+- The gate and 11 synthetic regression tests **passed in GitHub Actions**
+  on the development branch, run #39137148599, for commit `d870f45`.
+  Future changes to packaging or allowlisted files require fresh CI verification.
 - The historical Firefox malware warning is still unresolved; automatic
   release remains explicitly blocked.
+
+## Confirmed development CI result — 2026-10-18
+
+GitHub Actions [run #39137148599](https://github.com/mctransik/RcloneBrowser/actions/runs/39137148599)
+for source commit `d870f45e4e56cdb6421adf0ac31d6f5ce7bc9dac`
+completed **successfully**, first attempt:
+
+- Windows packaging log: `Windows package inventory passed: 69 expected-shape files; no high-confidence text credential markers.`
+  The check ran **before** the application ZIP was built and before
+  Windows artifact upload.
+- Windows Python unit tests: **25/25 passed**, including **11/11**
+  `ReleasePayloadGuardTests`. Same Python set passed on Linux.
+- CTest: **9/9 Windows** and **9/9 Linux** suites passed.
+- ClamAV: **70 files / 0 detections** on current Windows build;
+  **544 files / 0 detections** on the eight historic Windows archives.
+- Attested actual **inner Windows application ZIP** SHA-256:
+  `0ff03673e57b6804e63024cf80f6df181b7bb566285d6d08c4004fc6a0ec2724`.
+  Downstream provenance job rehashed it against scan-time checksum
+  and independently verified GitHub's SLSA attestation.
+- Windows, Linux, historical scan, Windows malware scan and development
+  provenance jobs all succeeded; **Release job was skipped by policy**.
+- These are the log-observed results for this specific run, not a
+  malware-free certification. Firefox's 2026-10-11 malware
+  warning remains unexplained, and no browser protection bypass or
+  end-user execution is authorized.
