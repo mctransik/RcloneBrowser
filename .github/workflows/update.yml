@@ -163,6 +163,11 @@ jobs:
             })
           $hashLines | Set-Content -Encoding ascii "$dir\docs\PACKAGE_SHA256SUMS.txt"
 
+          # Fail closed on unexpected payload files, private-key markers,
+          # and package checksum mismatches before any artifact is uploaded.
+          python scripts/audit_release_payload.py --package-dir "$dir"
+          if ($LASTEXITCODE -ne 0) { throw "Windows package inventory/security check failed." }
+
           # Smoke test of the packaged folder: the app must start with this
           # layout (platform plugin via qt.conf, image formats, TLS).
           $p = Start-Process -FilePath "$dir\RcloneBrowser.exe" -ArgumentList "--selftest" `
