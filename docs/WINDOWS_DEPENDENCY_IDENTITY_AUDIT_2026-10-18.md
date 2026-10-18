@@ -1,6 +1,6 @@
 # Windows dependency identity and embedded-version audit (2026-10-18)
 
-Status: **Locally tested, GitHub Windows CI pending.** Development branch only. Release remains disabled.
+Status: **CI-validated 2026-10-18, run #39143956529.** Development branch only. Release remains disabled.
 
 ## Evidence
 
@@ -66,3 +66,42 @@ the component classification policy (13 Qt, 10 Microsoft VC++,
   inventory artifact contains exactly the expected components.
 - The 2026-10-11 Firefox malware warning remains unexplained.
   The release job must remain disabled.
+
+## Confirmed GitHub Actions result — 2026-10-18
+
+[Development workflow run #39143956529](https://github.com/mctransik/RcloneBrowser/actions/runs/39143956529)
+completed **successfully** (attempt 1) for commit
+\`df22bef3f48c7e6fb946436dbe0421ff5571a4d3\`.
+
+Evidence from the Windows job and the downloaded text-only
+\`windows-dependency-inventory\` artifact (ID \`12142103271\`,
+containing \`windows-dependencies.json\`):
+
+- \`Windows component identity check passed: 26 EXE/DLL files with expected family, signer and version metadata.\`
+- The JSON is schema \`rclonebrowser.windows-dependencies.v1\`,
+  reports **26** files and expected versions
+  application \`4.0.2\`, Qt \`6.10.3\`, rclone \`1.75.2\`.
+- Actual \`RcloneBrowser.exe\` PE version is now **4.0.2**, corrected
+  from 4.0.1. Its SHA-256 is
+  \`65b1f6e0ca3f4afe2bb8e397c215a218670725d2755a4dc57c33ff101b53277a\`.
+- Reported families: **13 Qt**, **10 Microsoft VC++**, **1 catalog-signed
+  ICU**, **1 project EXE**, **1 bundled upstream rclone EXE**.
+  Windows Authenticode report: **24 Valid, 2 NotSigned,
+  0 abnormal statuses**. The two unsigned files are project and rclone;
+  upstream rclone is independently PGP+SHA256 verified in packaging.
+- New Python unit suite: **14/14 dependency identity tests passed**;
+  all Python tests: **39/39** passed on Windows and Linux.
+  CTest: **9/9** on each platform.
+- Existing Windows package content gate: **69 files** verified.
+  ClamAV: **70 current Windows files / 0 reported detections**;
+  **544 historical files / 0 reported detections**.
+- Verified downstream provenance subject: actual **inner Windows
+  application ZIP**, SHA-256
+  \`342686604cc20b9c628f6130e92e7b7774c2b917c13c33a16a53c5df52815cec\`.
+  The Github attestation was created and independently verified.
+- Release job remained **skipped/disabled**, not published.
+
+This only establishes the results reported by this Windows runner and
+the tested packaging/attestation policy. It cannot establish malware
+freedom, independently audit source-to-binary reproducibility, resolve
+license obligations or explain the historical Firefox malware warning.
