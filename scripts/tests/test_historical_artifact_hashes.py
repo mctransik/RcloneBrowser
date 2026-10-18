@@ -6,9 +6,21 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from audit_historical_windows_artifacts import collect_windows_pe_hashes, write_tsv
+from audit_historical_windows_artifacts import SAMPLES, collect_windows_pe_hashes, write_tsv
 
 class HistoricalBinaryHashTests(unittest.TestCase):
+    def test_pinned_historical_candidates_are_unique_and_well_formed(self):
+        # Safety test: no credentials, no network, no artifact download.
+        self.assertEqual(len(SAMPLES), 8)
+        self.assertEqual(len({a_id for _, _, a_id, _ in SAMPLES}), 8)
+        self.assertEqual(len({run for _, run, _, _ in SAMPLES}), 8)
+        for date, run, artifact, digest in SAMPLES:
+            self.assertIn(date, ("2026-10-10", "2026-10-11"))
+            self.assertGreater(run, 0)
+            self.assertGreater(artifact, 0)
+            self.assertEqual(len(digest), 64)
+            self.assertTrue(all(ch in "0123456789abcdef" for ch in digest))
+
     def test_hash_exe_and_dll_but_not_documentation(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

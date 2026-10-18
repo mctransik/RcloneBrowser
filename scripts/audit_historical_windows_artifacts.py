@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Acquire and safely inspect six known historical Windows GitHub Actions ZIPs.
+"""Acquire and safely inspect eight identified candidate historical Windows GitHub Actions ZIPs.
 
 Only historical, repository-owned public artifact IDs and pinned ZIP hashes
 are accepted. Never run ZIP members. Never upload ZIPs or extracted executables.
@@ -28,6 +28,10 @@ SAMPLES = (
     ("2026-10-11", 38123394766, 11696436681, "826e9c62a3a2f37207c5caccfea39c4f5cafbeda5e30a11b12ad24c7da1a2627"),
     ("2026-10-11", 38126413180, 11697072636, "3c5070d58e5e05c7e6fd86b0fb6521ee67c85f8f049bee7b2c2c7f9d86611032"),
     ("2026-10-11", 38129020027, 11699016180, "55f47e0cd3dc62d535778a8695a70258eb05a1b99990c3aad3c566778049d21a"),
+    # Previously documented as possible blocked downloads, but NOT included
+    # in the original six-sample scan. GitHub artifact metadata verified:
+    ("2026-10-11", 38145485000, 11704511761, "1ac122c41ee75e731b0357da416b11c8e38a106fae8820ce01f34e68d50e364f"),
+    ("2026-10-11", 38149605396, 11706221527, "3b669bfaee67ac76f46b4c3296182d54737a239942d5f4b3e891383ab8ddbbaa"),
 )
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -197,7 +201,7 @@ def main() -> int:
                   unique_rows)
         lines.append(f"inner_exe_dll_entries={len(pe_rows)}")
         lines.append(f"unique_inner_exe_dll_sha256={len(unique_rows)}")
-        print(f"All six outer ZIP hashes verified; {len(pe_rows)} EXE/DLL file instances; "
+        print(f"All {len(SAMPLES)} outer ZIP hashes verified; {len(pe_rows)} EXE/DLL file instances; "
               f"{len(unique_rows)} unique EXE/DLL hashes. Nothing executed.")
         return 0
     finally:
