@@ -188,6 +188,30 @@ jobs:
             -PackageDir "dist/RcloneBrowser" `
             -ReportDir "dist/security/authenticode"
 
+      # Validate identity of each EXE/DLL after Windows Authenticode audit.
+      # Compare real package bytes and versions with the signed-file CSV.
+      - name: Verify Windows dependency publishers and versions
+        shell: pwsh
+        run: |
+          $ver = (Get-Content VERSION -First 1).Trim()
+          python scripts/audit_windows_dependencies.py `
+            --package-dir "dist/RcloneBrowser" `
+            --authenticode-csv "dist/security/authenticode/windows-authenticode-files.csv" `
+            --app-version "$ver" `
+            --qt-version "6.10.3" `
+            --rclone-version "$env:RCLONE_VERSION" `
+            --output "dist/security/dependency-inventory/windows-dependencies.json"
+          if ($LASTEXITCODE -ne 0) { throw "Windows binary dependency identity check failed." }
+
+      # Report stays outside distributed ZIP. Failed gate blocks staging.
+      - name: Upload Windows dependency inventory (text only)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-dependency-inventory
+          path: dist/security/dependency-inventory/
+          if-no-files-found: ignore
+
       # Keep text evidence even when a signature check fails. Never upload
       # executables inside the audit report; ZIP SHA256 is unaffected.
       - name: Upload Windows Authenticode report
