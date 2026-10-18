@@ -156,3 +156,28 @@ Development [run #38885704340](https://github.com/mctransik/RcloneBrowser/action
 [Development run #38939172244](https://github.com/mctransik/RcloneBrowser/actions/runs/38939172244) built and passed **8/8 suites on Windows and Linux**, including `task_secret_risk` (nine synthetic cases) and `proxy_process_environment` (spawns synthetic child processes). The first build, run #38931484798, failed at Qt AutoMoc parsing a raw regex in the header; commit `44b95c5` moved implementation into a .cpp, and this follow-up build succeeded. ClamAV: **70 current files / 0 detections**, **408 historical files / 0 detections** with 3,628,169 signatures. Windows Authenticode audit: **24 valid, 2 unsigned, none anomalous** among 26 EXE/DLL. Exact scanned Windows ZIP SHA-256 `ec77b52f6ed90e9f222e8def549a2ecf2c43f8976a153ba26446c4882c0b189a`; [attestation #56747149](https://github.com/mctransik/RcloneBrowser/attestations/56747149) independently verified. Release skipped and frozen.
 
 **Not a clearance:** Actual Windows GUI and real proxy connections remain untested, saved task fields are still unencrypted and the warning is best-effort, and historical Firefox warnings remain unresolved. All tests use fictitious credentials; do not override security warnings to install the development artifact.
+
+## 2026-10-18 — Confirmed archive identity; historical source patch triage
+
+User-reported PowerShell SHA-256 of their existing 2026-10-11 Firefox
+`.part` file exactly matches GitHub Actions archive
+`11699016180` from [run #38129020027](https://github.com/mctransik/RcloneBrowser/actions/runs/38129020027):
+`55f47e0cd3dc62d535778a8695a70258eb05a1b99990c3aad3c566778049d21a`
+(45,168,558 bytes). This establishes archive byte identity,
+**not why Firefox blocked it**. Direct comparison of the archived
+source revision `dc45ffe` with its immediate predecessor found one
+Qt pane-column-resizing change in `src/dual_pane_widget.cpp` (25 added,
+11 deleted lines). No obvious malware functionality appears in that
+isolated patch, but prior source, dependencies and packaged binaries
+are **not thereby cleared**. The historical workflow verified rclone
+using PGP checksums but predates later ClamAV/build-attestation
+gates; retrospective historical ClamAV scanned eight candidate
+archives with zero detections.
+
+Firefox Safe Browsing can consider both download-host reputation and
+application-file metadata/publisher status, so the unsigned application
+may have been subject to additional checks. The exact mechanism and
+verdict reason are not known. Automated VirusTotal page access was
+unsuccessful and public hash searches found no usable independent
+engine verdict. [Detailed hash triage](FIREFOX_MALWARE_HASH_TRIAGE_2026-10-14.md).
+The **malware warning remains unresolved** and release stays disabled.
