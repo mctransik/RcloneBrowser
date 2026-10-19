@@ -44,6 +44,13 @@ void zeroMemory(QByteArray *bytes) {
 Format inspectFormat(const QByteArray &stored) {
   if (stored.startsWith(kEnvelopeMagic)) return Format::WindowsDpapiV1;
   if (stored.startsWith(kMagicPrefix)) return Format::UnsupportedProtected;
+  // A truncated envelope header must never be routed to the legacy decoder.
+  // Use at least four matching magic bytes to avoid treating tiny/empty legacy
+  // streams as protected. The actual task reader must still validate legacy
+  // QDataStream structure independently before permitting writes.
+  if (stored.size() >= 4 && stored.size() < kMagicPrefix.size() &&
+      kMagicPrefix.startsWith(stored))
+    return Format::UnsupportedProtected;
   return Format::LegacyPlaintext;
 }
 
