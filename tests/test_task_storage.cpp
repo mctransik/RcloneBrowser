@@ -22,7 +22,7 @@ private slots:
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
     const QString path = temp.filePath("tasks.bin");
-    const QByteArray original("legacy\\0task", 11);
+    const QByteArray original("legacy\0task", 11);
     QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly));
     QCOMPARE(file.write(original), static_cast<qint64>(original.size()));
