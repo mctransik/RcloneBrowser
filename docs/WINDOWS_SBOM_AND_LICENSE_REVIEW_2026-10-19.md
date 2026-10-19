@@ -1,6 +1,6 @@
 # Windows SBOM and third-party license review — 2026-10-19
 
-> **Development only: implementation pending first GitHub CI run.**
+> **Development only: validated in GitHub Actions run #39222019145 (2026-10-19).**
 > Not a complete or legally certified SBOM. The historical Firefox malware
 > warning remains unresolved, and the release workflow remains disabled.
 
@@ -41,8 +41,8 @@ The generator:
 The generator has **11 synthetic-fixture tests**, including unexpected
 files, payload tampering, manifest tampering, stale or incomplete
 dependency inventory, unknown component family, wrong provenance
-and version, and unknown art-license nonassertion. CI must still run
-on an actual Windows package before claiming success.
+and version, and unknown art-license nonassertion. The first full
+Windows/Linux workflow run passed; see the evidence below.
 
 ## Licensing observations and blockers
 
@@ -76,6 +76,55 @@ Sources: [CycloneDX 1.6 reference schema](https://github.com/CycloneDX/specifica
 [Qt LGPL obligations](https://www.qt.io/development/open-source-lgpl-obligations);
 [Microsoft VC++ distribution requirements](https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files).
 
-Next: inspect the actual CI-produced JSON and then prioritize source
-notices/Qt license-source delivery, asset provenance and Linux SBOM.
+Next: prioritize source notices/Qt license-source delivery, asset
+provenance and Linux SBOM.
 Nothing here re-enables a release or overrides browser protections.
+
+
+## Confirmed full Windows/Linux CI and direct artifact comparison
+
+Development workflow
+[#39222019145](https://github.com/mctransik/RcloneBrowser/actions/runs/39222019145)
+on commit `2c152cf4081420d2e9241d24211380b7953bf559`
+completed **success** (attempt 1) on 2026-10-19.
+
+- Windows and Linux: **9/9 CTest each**, **50/50 Python synthetic
+  unit tests each**, including **11/11 newly added SBOM tests**.
+- Windows package guard accepted **69 expected-shape files**.
+  Authenticode: **26 EXE/DLL**, **24 Valid, 2 unsigned,
+  0 anomalous statuses**. Identity gate accepted 26:
+  13 Qt DLLs/plugins, 10 VC++ runtime DLLs, 1 ICU catalog-signed
+  DLL, 1 application EXE, 1 bundled rclone EXE.
+- Windows SBOM generator reported **69 exact package files**
+  and **5 logical components**. The separately uploaded
+  `windows-preliminary-cyclonedx-sbom` artifact ID
+  `12172451381` contains `windows-preliminary.cdx.json`.
+  JSON has `bomFormat=CycloneDX`, `specVersion=1.6`,
+  application `4.0.2`, Qt `6.10.3`, rclone `1.75.2`, and
+  matches the workflow source commit.
+- The downloaded SBOM contains 69 `file` components with
+  SHA-256 each, and 5 additional logical records. The 69
+  file rows consist of 26 EXE/DLL, 35 icon/README entries,
+  6 project docs/manifests, and 2 configuration files.
+- **Independent post-CI, read-only comparison:** downloaded the
+  `RcloneBrowser-4.0.2-windows-x64` scanned payload artifact
+  (ID `12172925638`) and the separate SBOM artifact. Exact
+  filename sets match: **69/69**, no extras or missing paths;
+  **69/69 SHA-256 hashes match actual contained file bytes**.
+  The separately included `docs/PACKAGE_SHA256SUMS.txt` has
+  exactly 68 entries (the checksum manifest excludes itself),
+  all **68/68** match and cover every other file.
+- ClamAV: **70 scanned current Windows files / 0 reported
+  infections**, **544 scanned historical files / 0 reported
+  infections**. Current ClamAV database 28158. No general
+  malware-freedom claim follows from these scans.
+- Build provenance attestation was created and successfully
+  independently verified for the **inner scanned Windows ZIP**,
+  SHA-256 `9b8fa31fbbca4d37fdbf61ba0f391804f6eaaba22534346bc6377889194105e3`.
+  This is not the GitHub Actions artifact-wrapper SHA-256.
+- **Release job remained skipped/disabled.** No software
+  distribution clearance is claimed; historic Firefox warning
+  and the listed Qt/MSVC/ICU/icon and upstream notice obligations
+  are still open. A pinned official CycloneDX schema-validation
+  step is also outstanding; JSON structure and payload coverage
+  have been verified, not full schema conformity.
