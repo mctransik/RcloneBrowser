@@ -8,6 +8,88 @@ class TestTaskStorage : public QObject {
   Q_OBJECT
 
 private slots:
+  void missingTaskFileIsNotAReadFailure() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QByteArray content("stale");
+    QCOMPARE(TaskStorage::readTaskBytes(temp.filePath("missing-tasks.bin"),
+                                        &content),
+             TaskStorage::ReadResult::Absent);
+    QVERIFY(content.isEmpty());
+  }
+
+  void existingTaskFileIsReadWithoutModification() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = temp.filePath("tasks.bin");
+    const QByteArray original("legacy\0task", 11);
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(original), static_cast<qint64>(original.size()));
+    file.close();
+    QByteArray output;
+    QCOMPARE(TaskStorage::readTaskBytes(path, &output),
+             TaskStorage::ReadResult::Loaded);
+    QCOMPARE(output, original);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), original);
+  }
+
+  void emptyTaskFileIsValidNotMissing() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = temp.filePath("tasks.bin");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.close();
+    QByteArray bytes("stale");
+    QCOMPARE(TaskStorage::readTaskBytes(path, &bytes),
+             TaskStorage::ReadResult::Loaded);
+    QVERIFY(bytes.isEmpty());
+  }
+
+  void rejectsDirectoryInsteadOfTreatingItAsMissing() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QByteArray bytes("old");
+    QCOMPARE(TaskStorage::readTaskBytes(temp.path(), &bytes),
+             TaskStorage::ReadResult::Unreadable);
+    QVERIFY(bytes.isEmpty());
+  }
+
+  void rejectsOversizedFileForRecovery() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = temp.filePath("tasks.bin");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.resize(64LL * 1024 * 1024 + 1));
+    file.close();
+    QByteArray bytes;
+    QCOMPARE(TaskStorage::readTaskBytes(path, &bytes),
+             TaskStorage::ReadResult::Unreadable);
+    QVERIFY(bytes.isEmpty());
+  }
+
+#ifndef Q_OS_WIN
+  void rejectsSymlinkedTaskFile() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString original = temp.filePath("target.bin");
+    const QString symlink = temp.filePath("tasks.bin");
+    QFile file(original);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("legacy", 6), qint64(6));
+    file.close();
+    if (!QFile::link(original, symlink))
+      QSKIP("Filesystem does not permit symlinks");
+    QByteArray bytes;
+    QCOMPARE(TaskStorage::readTaskBytes(symlink, &bytes),
+             TaskStorage::ReadResult::Unreadable);
+    QVERIFY(bytes.isEmpty());
+  }
+#endif
+
   void savesExistingDataStreamFormat() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
