@@ -38,3 +38,17 @@ References: [rclone's license statement](https://github.com/rclone/rclone/blob/m
 - [ ] Clarify the legal/project publisher and an appropriate privacy notice before public general release.
 
 This document deliberately does not claim that a third-party license has been fully audited, or that SignPath will accept the project.
+
+
+## 2026-10-19 — Preliminary Windows SBOM pipeline (CI pending)
+
+The development workflow now contains a prospective **CycloneDX 1.6**
+per-file Windows inventory gate, generated from the *actual* package
+after the validated component signer/PE inventory, and uploaded in a
+separate text-only artifact. It verifies full file-hash coverage and
+source/build provenance. See
+[Windows SBOM and license review](WINDOWS_SBOM_AND_LICENSE_REVIEW_2026-10-19.md).
+**CI has not yet validated this new code.** An SBOM is not a license
+clearance: Qt LGPL/GPL conditions, Microsoft redistribution eligibility,
+upstream rclone notices, Fluent embedded-icon notices, cloud logo rights
+and bundled ICU provenance remain open release blockers.

@@ -212,6 +212,31 @@ jobs:
           path: dist/security/dependency-inventory/
           if-no-files-found: ignore
 
+      # Inventory exact packaged bytes AFTER signer/PE version review.
+      # SBOM is intentionally outside the distributable ZIP, and licenses
+      # requiring legal review are never guessed or marked compliant.
+      - name: Generate preliminary CycloneDX Windows SBOM
+        shell: pwsh
+        run: |
+          $ver = (Get-Content VERSION -First 1).Trim()
+          python scripts/generate_windows_sbom.py `
+            --package-dir "dist/RcloneBrowser" `
+            --binary-inventory "dist/security/dependency-inventory/windows-dependencies.json" `
+            --source-commit "$env:GITHUB_SHA" `
+            --app-version "$ver" `
+            --qt-version "6.10.3" `
+            --rclone-version "$env:RCLONE_VERSION" `
+            --output "dist/security/sbom/windows-preliminary.cdx.json"
+          if ($LASTEXITCODE -ne 0) { throw "Windows SBOM integrity/coverage check failed." }
+
+      - name: Upload Windows preliminary SBOM (text only)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-preliminary-cyclonedx-sbom
+          path: dist/security/sbom/*.cdx.json
+          if-no-files-found: ignore
+
       # Keep text evidence even when a signature check fails. Never upload
       # executables inside the audit report; ZIP SHA256 is unaffected.
       - name: Upload Windows Authenticode report
