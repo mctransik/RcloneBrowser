@@ -4,6 +4,7 @@
 #include <QFileDevice>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <utility>
 
 namespace TaskStorage {
 
