@@ -86,3 +86,18 @@ completeness of open-source license attribution.
 ## Workflow validation 2026-10-19
 
 [Run #39229425755](https://github.com/mctransik/RcloneBrowser/actions/runs/39229425755) succeeded. The new pinned official CycloneDX 1.6 schema validation gate accepted the actual **74-component** JSON (69 exact Windows files plus 5 logical software entries); **all 7/7 schema tests** passed after the required Python dependency installation. The initial general 57-test Python suite skipped 3 schema tests before that installation; these were run later in the Windows schema stage. The SBOM and scanned Windows payload were separately downloaded: **69/69 paths and SHA-256 hashes matched**, and 68/68 package checksum-manifest entries matched. This shows data-format correctness and package correspondence, **not** completion of the third-party license duties listed above. No release was made.
+
+
+## Development packaging update — exact rclone and Fluent notices (CI pending)
+
+Commit 99afc2a added three files to the **proposed** Windows `docs/` payload and Linux AppImage support folder:
+
+- `RCLONE_LICENSE.txt`: byte-for-byte copied from upstream rclone **v1.75.2** `COPYING` (Git blob `8c27c67fd0a12a1e18db983f19450abed435e689`). The original file is vendored in `third_party/licenses/`.
+- `FLUENT_UI_SYSTEM_ICONS_LICENSE.txt`: byte-for-byte copied from repository `src/icons/fluent/LICENSE.txt` (Git blob `bc9c36b28f467f7006c4e5f1be4ca0a1a0b895f3`).
+- `THIRD_PARTY_NOTICES.md`: names the origin/attributions and clearly says **LICENSE REVIEW INCOMPLETE**.
+
+`scripts/verify_third_party_notices.py` rejects an unreviewed rclone version, altered pinned source texts, missing or altered packaged notices, and missing review warnings. Its **nine synthetic tests** cover valid packaging and failure paths. The strict Windows payload allowlist also requires all three additional documents, with two additional allowlist regression tests.
+
+Expected next Windows payload/SBOM: **72 files**, not the previous 69; the real workflow has **not yet verified this build**. The previous report's 69-file counts remain correct for the earlier successful run.
+
+**Still unresolved:** the complete Qt LGPL/GPL and third-party texts, source and relinking plan; Microsoft runtime redistribution eligibility; ICU provenance; cloud-logo author/trademark permissions; transitive third-party notice compliance. These additions do not grant distribution approval.

@@ -150,3 +150,8 @@ Development [workflow #39229425755](https://github.com/mctransik/RcloneBrowser/a
 - Release job remains **disabled/skipped**; no release or general-download clearance. An official schema-valid BOM establishes **format correctness**, not that licenses, transitive dependencies, SBOM pedigree, actual source compliance, malware risks, or the historic Firefox warning are resolved.
 
 Next: include and verify exact-version upstream rclone MIT copyright notice, Fluent UI Microsoft MIT notice and applicable Qt LGPL/third-party notices/source access without claiming completeness until every obligation has been assessed. Review Microsoft VC++ runtime redistribution eligibility, ICU origin and 34 provider-logo rights before any release.
+
+
+## Follow-up: original upstream license texts added to packaging (CI pending)
+
+The development workflow adds the exact-version rclone `COPYING`, Microsoft's Fluent UI System Icons license text and a `THIRD_PARTY_NOTICES.md` warning to the Windows `docs/` folder and Linux AppDir. A new source/package hash check enforces the content and pinned version. **The next Windows package and corresponding SBOM should have 72 files** instead of the previously verified 69. Neither this pending change nor its presence in a future SBOM resolves Qt LGPL source/relinking requirements or third-party distribution eligibility.
