@@ -1,9 +1,35 @@
 #include "task_storage.h"
 
+#include <QFile>
 #include <QFileDevice>
+#include <QFileInfo>
 #include <QSaveFile>
 
 namespace TaskStorage {
+
+// A damaged or unexpectedly large saved task file must be kept for recovery,
+// not treated as an empty list. Ordinary task files are far smaller than this.
+ReadResult readTaskBytes(const QString &path, QByteArray *contents) {
+  if (!contents) return ReadResult::Unreadable;
+  contents->clear();
+  if (path.isEmpty()) return ReadResult::Unreadable;
+  const QFileInfo info(path);
+  if (!info.exists() && !info.isSymLink())
+    return ReadResult::Absent;
+  constexpr qint64 maxTaskFileSize = 64LL * 1024 * 1024;
+  if (info.isSymLink() || !info.isFile() || info.size() < 0 ||
+      info.size() > maxTaskFileSize)
+    return ReadResult::Unreadable;
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly))
+    return ReadResult::Unreadable;
+  QByteArray bytes = file.readAll();
+  if (file.error() != QFileDevice::NoError ||
+      static_cast<qint64>(bytes.size()) != info.size())
+    return ReadResult::Unreadable;
+  *contents = std::move(bytes);
+  return ReadResult::Loaded;
+}
 
 bool saveAtomically(
     const QString &path,
