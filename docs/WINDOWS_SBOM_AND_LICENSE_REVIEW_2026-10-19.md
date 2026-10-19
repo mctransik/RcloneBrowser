@@ -132,4 +132,21 @@ completed **success** (attempt 1) on 2026-10-19.
 
 ### 2026-10-19 follow-up — official schema validation (CI pending)
 
-A new fail-closed Windows stage verifies the preliminary SBOM using the original CycloneDX 1.6 Draft-07 JSON schemas plus both official external reference schemas from an immutable upstream commit. The downloaded files are checked against their Git blob hashes, and unknown external `$ref` links cannot fetch additional schemas. See [license obligations and notice status](WINDOWS_LICENSE_OBLIGATIONS_2026-10-19.md). **The changed workflow needs a fresh CI run**; current 69-file SBOM remains verified against its original ZIP, but official schema conformance has not yet been established.
+A new fail-closed Windows stage verifies the preliminary SBOM using the original CycloneDX 1.6 Draft-07 JSON schemas plus both official external reference schemas from an immutable upstream commit. The downloaded files are checked against their Git blob hashes, and unknown external `$ref` links cannot fetch additional schemas. See [license obligations and notice status](WINDOWS_LICENSE_OBLIGATIONS_2026-10-19.md). **The changed workflow passed CI #39229425755**, including official schema validation; independent real-payload matching is recorded below.
+
+
+## Official CycloneDX schema validation and exact-package cross-check — 2026-10-19
+
+Development [workflow #39229425755](https://github.com/mctransik/RcloneBrowser/actions/runs/39229425755) completed `success` on source commit `a128dbc5a1afbb87b17050b382d605b81fe8c123` (attempt 1).
+
+- The Windows log explicitly reports:
+  `Official CycloneDX 1.6 schema validation passed: 74 components; three git-blob-pinned schemas; offline reference resolution.`
+- The separate schema-validation stage ran **7/7 tests**, all passed. The earlier general Python suite ran **57 total / 54 passed / 3 skipped** because `jsonschema` was intentionally installed only at the later schema step. Linux also reported the three corresponding skips in its 57-test general Python suite. These skipped tests were subsequently **run and passed on Windows**, not silently counted as successes in the earlier stage.
+- Windows and Linux each passed **9/9 CTest** tests.
+- The actual SBOM artifact ID `12176442775` (`windows-preliminary.cdx.json`) was downloaded independently alongside the **scanned Windows payload artifact** ID `12175143636`. Static, read-only comparison of all ZIP member bytes confirmed **69/69 identical relative file paths, 69/69 matching SHA-256 hashes**, with no missing/extra file. The packaged `docs/PACKAGE_SHA256SUMS.txt` has **68/68 correct entries** covering all other files and deliberately excludes itself.
+- The actual BOM reports **69 file components** plus **5 logical dependency components**. The BOM's source commit is exactly `a128dbc5a1afbb87b17050b382d605b81fe8c123`; application version `4.0.2`, Qt `6.10.3`, rclone `1.75.2`.
+- Windows Authenticode/metadata: **26 EXE/DLL**, of which **24 Valid / 2 unsigned / 0 anomalous**, all 26 passed identity policy. Current ClamAV: **70 files / 0 reported detections**; historical ClamAV: **544 files / 0 reported detections**.
+- The downstream Windows archive provenance attestation was independently verified for **inner ZIP** SHA-256 `88680d9e60c2153a43bce394e9d9f491f23c93d3058d21ad62f6637d0b72c0f4`, not for the GitHub artifact wrapper ZIP.
+- Release job remains **disabled/skipped**; no release or general-download clearance. An official schema-valid BOM establishes **format correctness**, not that licenses, transitive dependencies, SBOM pedigree, actual source compliance, malware risks, or the historic Firefox warning are resolved.
+
+Next: include and verify exact-version upstream rclone MIT copyright notice, Fluent UI Microsoft MIT notice and applicable Qt LGPL/third-party notices/source access without claiming completeness until every obligation has been assessed. Review Microsoft VC++ runtime redistribution eligibility, ICU origin and 34 provider-logo rights before any release.

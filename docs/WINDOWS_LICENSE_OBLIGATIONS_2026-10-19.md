@@ -77,7 +77,12 @@ data is under the [CycloneDX specification license (Apache-2.0)](https://github.
 the reference documents are read in CI, not incorporated into
 the application's Windows ZIP.
 
-**Validation status: pending first workflow execution** on
-this change. No schema conformance can be claimed from earlier
-successful runs. CycloneDX conformance is also separate from
+**Validation status: verified in development CI run #39229425755.**
+The official schema validator passed on the real Windows SBOM and all 7
+schema regression tests passed in the later Windows validation step. CycloneDX conformance is also separate from
 completeness of open-source license attribution.
+
+
+## Workflow validation 2026-10-19
+
+[Run #39229425755](https://github.com/mctransik/RcloneBrowser/actions/runs/39229425755) succeeded. The new pinned official CycloneDX 1.6 schema validation gate accepted the actual **74-component** JSON (69 exact Windows files plus 5 logical software entries); **all 7/7 schema tests** passed after the required Python dependency installation. The initial general 57-test Python suite skipped 3 schema tests before that installation; these were run later in the Windows schema stage. The SBOM and scanned Windows payload were separately downloaded: **69/69 paths and SHA-256 hashes matched**, and 68/68 package checksum-manifest entries matched. This shows data-format correctness and package correspondence, **not** completion of the third-party license duties listed above. No release was made.
