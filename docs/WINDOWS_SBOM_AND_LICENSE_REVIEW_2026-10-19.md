@@ -128,3 +128,8 @@ completed **success** (attempt 1) on 2026-10-19.
   are still open. A pinned official CycloneDX schema-validation
   step is also outstanding; JSON structure and payload coverage
   have been verified, not full schema conformity.
+
+
+### 2026-10-19 follow-up — official schema validation (CI pending)
+
+A new fail-closed Windows stage verifies the preliminary SBOM using the original CycloneDX 1.6 Draft-07 JSON schemas plus both official external reference schemas from an immutable upstream commit. The downloaded files are checked against their Git blob hashes, and unknown external `$ref` links cannot fetch additional schemas. See [license obligations and notice status](WINDOWS_LICENSE_OBLIGATIONS_2026-10-19.md). **The changed workflow needs a fresh CI run**; current 69-file SBOM remains verified against its original ZIP, but official schema conformance has not yet been established.

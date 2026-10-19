@@ -52,3 +52,8 @@ source/build provenance. See
 clearance: Qt LGPL/GPL conditions, Microsoft redistribution eligibility,
 upstream rclone notices, Fluent embedded-icon notices, cloud logo rights
 and bundled ICU provenance remain open release blockers.
+
+
+## 2026-10-19 — Specific notice obligations identified
+
+We inspected the 69-file Windows development artifact and recorded the exact 13 Qt DLL/plugin names, the upstream `rclone` v1.75.2 MIT COPYING requirement, Microsoft runtime redistribution restrictions, the ICU provenance gap, Microsoft Fluent icon notice and 34 remote-logo rights to review in [Windows license obligations](WINDOWS_LICENSE_OBLIGATIONS_2026-10-19.md). **No notices were silently added to the distributable ZIP; license/source rights remain unresolved and prevent a general release.** The official CycloneDX 1.6 schema validation gate has been added but is pending CI.
