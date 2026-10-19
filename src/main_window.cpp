@@ -9,6 +9,8 @@
 #include "list_of_job_options.h"
 #include "mount_widget.h"
 #include "preferences_dialog.h"
+#include "credential_safety.h"
+#include "proxy_credentials.h"
 #include "remote_widget.h"
 #include "stream_widget.h"
 #include "transfer_dialog.h"
@@ -94,6 +96,36 @@ MainWindow::MainWindow() {
     PreferencesDialog dialog(this);
     if (dialog.exec() == QDialog::Accepted) {
       auto settings = GetSettings();
+      const QString http = dialog.getHttpProxy().trimmed();
+      const QString https = dialog.getHttpsProxy().trimmed();
+      const bool portable = IsPortableMode();
+      if (portable && (ProxyCredentials::hasUserInfo(http) ||
+                       ProxyCredentials::hasUserInfo(https))) {
+        if (QMessageBox::warning(
+                this, tr("Portable proxy credentials"),
+                tr("Portable mode stores proxy URLs in an unencrypted settings "
+                   "file. Anyone with access to that file may read embedded "
+                   "usernames or passwords.\n\nSave anyway?"),
+                QMessageBox::Yes | QMessageBox::Cancel,
+                QMessageBox::Cancel) != QMessageBox::Yes)
+          return;
+      }
+      QString error;
+#ifdef Q_OS_WIN
+      const bool protect = !portable;
+#else
+      const bool protect = false;
+#endif
+      if (!ProxyCredentials::save(settings.get(), "Settings/http_proxy",
+                                  http, protect, &error) ||
+          !ProxyCredentials::save(settings.get(), "Settings/https_proxy",
+                                  https, protect, &error)) {
+        QMessageBox::critical(
+            this, tr("Proxy settings not saved"),
+            tr("%1\n\nThe previous credentials were preserved; "
+               "please check the proxy settings.").arg(error));
+        return;
+      }
       settings->setValue("Settings/rclone", dialog.getRclone().trimmed());
       settings->setValue("Settings/rcloneConf",
                          dialog.getRcloneConf().trimmed());
@@ -132,11 +164,12 @@ MainWindow::MainWindow() {
       settings->setValue("Settings/iconSize", dialog.getIconSize().trimmed());
 
       settings->setValue("Settings/useProxy", dialog.getUseProxy());
-      settings->setValue("Settings/http_proxy",
-                         dialog.getHttpProxy().trimmed());
-      settings->setValue("Settings/https_proxy",
-                         dialog.getHttpsProxy().trimmed());
       settings->setValue("Settings/no_proxy", dialog.getNoProxy().trimmed());
+
+      // Use the new proxy configuration for future rclone processes without
+      // modifying the environment inherited by other child programs.
+      SetRcloneProxy(dialog.getUseProxy(), http, https,
+                     dialog.getNoProxy().trimmed());
 
       SetRclone(dialog.getRclone());
       SetRcloneConf(dialog.getRcloneConf());
@@ -163,12 +196,21 @@ MainWindow::MainWindow() {
     box.setTextFormat(Qt::RichText);
     box.setText(QString(
         R"(<h3>Rclone Browser )" RCLONE_BROWSER_VERSION "</h3>"
-        R"(<p>Browse, transfer and sync your cloud storage with rclone.</p>)"
-        R"(<p>Copyright &copy; 2026 <a href="https://github.com/Jackpison">Jackpison</a></p>)"
-        R"(<p>Development and maintenance<br /><a href="https://github.com/Jackpison/RcloneBrowser">github.com/Jackpison/RcloneBrowser</a></p>)"
-        R"(<p>Based on the original version by<br /><a href="https://github.com/mmozeiko/RcloneBrowser">Martins Mozeiko</a></p>)"
-        R"(<p>Released under the MIT License.</p>)"
-        R"(<p><b>Feedback and bug reports are welcome!</b><br /><a href="https://github.com/Jackpison/RcloneBrowser/issues">Open an issue on GitHub</a></p>)"));
+        R"(<p><b>Independent cloud-management development fork.</b> This application is)"
+        R"( based on the Rclone Browser codebase and is not an official upstream release.)"
+        R"( Its final product name has not been selected yet.</p>)"
+        R"(<p><b>Current project:</b><br /><a href="https://github.com/mctransik/RcloneBrowser">)"
+        R"(github.com/mctransik/RcloneBrowser</a></p>)"
+        R"(<p><b>Upstream credits:</b><br />)"
+        R"(<a href="https://github.com/Jackpison/RcloneExplorer">Jackpison / Rclone Explorer</a>, )"
+        R"(<a href="https://github.com/kapitainsky/RcloneBrowser">kapitainsky</a>, )"
+        R"(<a href="https://github.com/mmozeiko/RcloneBrowser">Martins Mozeiko</a> and )"
+        R"(<a href="https://github.com/DinCahill/RcloneBrowser">DinCahill</a>.</p>)"
+        R"(<p>MIT-licensed inherited source code. Original copyright and permission)"
+        R"( notices are preserved in the repository LICENSE. Third-party assets)"
+        R"( may have separate terms.</p>)"
+        R"(<p><b>Development status:</b> Experimental features are still being tested.)"
+        R"( GitHub Issues are currently disabled for this fork.</p>)"));
     box.exec();
   });
   QObject::connect(ui.aboutQt, &QAction::triggered, qApp,
@@ -225,8 +267,16 @@ MainWindow::MainWindow() {
   QObject::connect(ui.buttonDeleteTask, &QPushButton::clicked, this, [=, this]() {
     JobOptionsListWidgetItem *item = static_cast<JobOptionsListWidgetItem *>(
         ui.tasksListWidget->currentItem());
+    if (!item)
+      return;
     JobOptions *jo = item->GetData();
-    ListOfJobOptions::getInstance()->Forget(jo);
+    if (!ListOfJobOptions::getInstance()->Forget(jo)) {
+      QMessageBox::critical(
+          this, tr("Task not deleted"),
+          tr("The task could not be deleted because the task list could not "
+             "be saved. The task has been kept. Please check that the "
+             "application data folder is writable and try again."));
+    }
   });
 
   QObject::connect(ListOfJobOptions::getInstance(),
@@ -699,17 +749,17 @@ void MainWindow::rcloneListRemotes() {
 
 bool MainWindow::getConfigPassword(QProcess *p) {
   QString output = p->readAllStandardError().trimmed();
-  if (output.indexOf("RCLONE_CONFIG_PASS") > 0) {
+  if (CredentialSafety::requiresConfigPassword(output)) {
     bool ok;
     QString password = QInputDialog::getText(
         this, qApp->applicationDisplayName(),
         "Enter password for .rclone.conf configuration file:",
         QLineEdit::Password, QString(), &ok);
-    if (ok) {
+    if (ok && !password.isEmpty()) {
       SetRclonePassword(password);
       return true;
     }
-  } else if (output.indexOf("unknown command \"listremotes\"") > 0) {
+  } else if (output.contains("unknown command \"listremotes\"")) {
     QMessageBox::critical(this, qApp->applicationDisplayName(),
                           "It seems rclone version you are using is too "
                           "old.\nPlease upgrade to the latest version");
@@ -1053,6 +1103,17 @@ void MainWindow::setupRcloneUpdater() {
 void MainWindow::updateRcloneStatus() {
   if (!mRcloneStatus) {
     return;
+  }
+  if (mDashboardRclone) {
+    mDashboardRclone->setText(mRcloneVersion.isEmpty()
+                                 ? tr("Not detected")
+                                 : tr("rclone v%1").arg(mRcloneVersion));
+  }
+  if (mSecurityRclone) {
+    mSecurityRclone->setText(mRcloneVersion.isEmpty()
+                                ? tr("No rclone detected")
+                                : tr("Installed: rclone v%1\nExecutable: %2")
+                                      .arg(mRcloneVersion, QDir::toNativeSeparators(GetRclone())));
   }
   if (mRcloneVersion.isEmpty()) {
     mRcloneStatus->setText(

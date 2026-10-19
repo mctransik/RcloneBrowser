@@ -1,4 +1,5 @@
 #include "mount_widget.h"
+#include "log_safety.h"
 #include "theme.h"
 #include "utils.h"
 
@@ -52,7 +53,8 @@ MountWidget::MountWidget(QProcess *process, const QString &remote,
 
   QObject::connect(mProcess, &QProcess::readyRead, this, [=, this]() {
     while (mProcess->canReadLine()) {
-      ui.output->appendPlainText(mProcess->readLine().trimmed());
+      ui.output->appendPlainText(LogSafety::maskKnownCredentials(
+          QString::fromUtf8(mProcess->readLine()).trimmed()));
     }
   });
 

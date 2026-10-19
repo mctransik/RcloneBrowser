@@ -3,6 +3,7 @@
 // and their logic are kept; this file only rearranges and restyles them.
 
 #include "main_window.h"
+#include "dual_pane_widget.h"
 #include "remote_widget.h"
 #include "theme.h"
 #include "utils.h"
@@ -78,7 +79,8 @@ public:
   }
 };
 
-enum Page { HomePage = 0, TransfersPage = 1, TasksPage = 2, BrowserPage = 3 };
+enum Page { HomePage = 0, TransfersPage = 1, TasksPage = 2, BrowserPage = 3,
+            DashboardPage = 4, FileManagerPage = 5, SecurityPage = 6 };
 
 QLabel *makeLabel(const QString &text, const char *objectName) {
   auto *l = new QLabel(text);
@@ -109,49 +111,91 @@ QWidget *makePageHeader(const QString &title, const QString &subtitle,
 }
 
 // Home page remote card: icon tile, name, remote type.
+enum StorageRole {
+  CapacityTotalRole = Qt::UserRole + 11,
+  CapacityUsedRole,
+  CapacityStatusRole
+};
+
+// Actual capacity numbers are supplied by explicit rclone about calls.
+// Unavailable data is labelled, never invented.
 class RemoteCardDelegate : public QStyledItemDelegate {
 public:
   using QStyledItemDelegate::QStyledItemDelegate;
-
+  void setCards(bool cards) { mCards = cards; }
   QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override {
-    return QSize(164, 126);
+    return mCards ? QSize(234, 164) : QSize(460, 58);
   }
 
   void paint(QPainter *p, const QStyleOptionViewItem &opt,
              const QModelIndex &index) const override {
     p->save();
     p->setRenderHint(QPainter::Antialiasing);
-    const QRectF card = QRectF(opt.rect).adjusted(6.5, 6.5, -6.5, -6.5);
-    const bool hover = opt.state & QStyle::State_MouseOver;
     const bool selected = opt.state & QStyle::State_Selected;
-
-    p->setPen(QPen(selected ? Theme::color("accentText") : Theme::color("cardStroke"), 1));
+    const bool hover = opt.state & QStyle::State_MouseOver;
+    const QRectF outer = QRectF(opt.rect).adjusted(5, 5, -5, -5);
+    p->setPen(QPen(selected ? Theme::color("accentText") : Theme::color("cardStroke")));
     p->setBrush(hover || selected ? Theme::color("cardHover") : Theme::color("card"));
-    p->drawRoundedRect(card, 8, 8);
+    p->drawRoundedRect(outer, 8, 8);
 
-    // service tile
-    const QRectF tile(card.center().x() - 22, card.top() + 14, 44, 44);
+    const QString name = index.data(Qt::DisplayRole).toString();
+    const QString type = index.data(Qt::UserRole).toString();
+    QString usage = index.data(CapacityStatusRole).toString();
+    if (usage.isEmpty()) usage = QObject::tr("Not queried");
+    const QVariant totalValue = index.data(CapacityTotalRole);
+    const QVariant usedValue = index.data(CapacityUsedRole);
+    const qint64 total = totalValue.isValid() ? totalValue.toLongLong() : -1;
+    const qint64 used = usedValue.isValid() ? usedValue.toLongLong() : -1;
+    if (total > 0 && used >= 0) {
+      usage = QObject::tr("%1 of %2 used")
+                  .arg(QLocale().formattedDataSize(used),
+                       QLocale().formattedDataSize(total));
+    }
+
     const QIcon icon = index.data(Qt::DecorationRole).value<QIcon>();
-    icon.paint(p, tile.toRect());
-
-    // name + type
-    QFont f = Theme::uiFont();
-    f.setWeight(QFont::DemiBold);
-    p->setFont(f);
+    QFont nameFont = Theme::uiFont(1.02);
+    nameFont.setWeight(QFont::DemiBold);
+    p->setFont(nameFont);
     p->setPen(Theme::color("text"));
-    const QRectF nameRect(card.left() + 8, tile.bottom() + 6, card.width() - 16, 20);
-    const QString name = QFontMetrics(f).elidedText(index.data(Qt::DisplayRole).toString(),
-                                                    Qt::ElideRight, int(nameRect.width()));
-    p->drawText(nameRect, Qt::AlignHCenter | Qt::AlignVCenter, name);
-
-    QFont typeFont = Theme::uiFont(0.9);
-    p->setFont(typeFont);
-    p->setPen(Theme::color("text2"));
-    p->drawText(QRectF(nameRect.left(), nameRect.bottom(), nameRect.width(), 18),
-                Qt::AlignHCenter | Qt::AlignVCenter,
-                index.data(Qt::UserRole).toString());
+    if (mCards) {
+      icon.paint(p, QRect(int(outer.left() + 14), int(outer.top() + 13), 38, 38));
+      QRectF title(outer.left() + 60, outer.top() + 13, outer.width() - 74, 27);
+      p->drawText(title, Qt::AlignVCenter,
+                  QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, int(title.width())));
+      p->setFont(Theme::uiFont(0.9));
+      p->setPen(Theme::color("text2"));
+      p->drawText(QRectF(title.left(), title.bottom(), title.width(), 20),
+                  Qt::AlignVCenter, type);
+      p->drawText(QRectF(outer.left() + 14, outer.bottom() - 64,
+                         outer.width() - 28, 23), Qt::AlignVCenter, usage);
+      if (total > 0 && used >= 0) {
+        const QRectF track(outer.left() + 14, outer.bottom() - 31,
+                           outer.width() - 28, 7);
+        p->setPen(Qt::NoPen);
+        p->setBrush(Theme::color("track"));
+        p->drawRoundedRect(track, 3.5, 3.5);
+        const qreal fill = qBound(0.0, double(used) / double(total), 1.0);
+        p->setBrush(Theme::color("accentBtn"));
+        p->drawRoundedRect(QRectF(track.left(), track.top(),
+                                  track.width() * fill, track.height()), 3.5, 3.5);
+      }
+    } else {
+      icon.paint(p, QRect(int(outer.left() + 12), int(outer.top() + 10), 30, 30));
+      const QRectF title(outer.left() + 54, outer.top() + 7, outer.width() * 0.43, 22);
+      p->drawText(title, Qt::AlignVCenter,
+                  QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, int(title.width())));
+      p->setFont(Theme::uiFont(0.88));
+      p->setPen(Theme::color("text2"));
+      p->drawText(QRectF(title.left(), title.bottom(), title.width(), 18),
+                  Qt::AlignVCenter, type);
+      p->drawText(QRectF(outer.left() + outer.width() * 0.54, outer.top() + 10,
+                         outer.width() * 0.44, outer.height() - 20),
+                  Qt::AlignRight | Qt::AlignVCenter, usage);
+    }
     p->restore();
   }
+private:
+  bool mCards = false;
 };
 
 void setPageMargins(QLayout *l) {
@@ -228,10 +272,13 @@ void MainWindow::buildShell() {
     it->setData(FilledIconRole, Theme::icon(icon + "_filled"));
     return it;
   };
-  addPage("home", tr("Home"), HomePage);
+  addPage("home", tr("Dashboard"), DashboardPage);
+  addPage("cloud", tr("Storage"), HomePage);
+  addPage("folder", tr("File manager"), FileManagerPage);
   mNavTransfers = addPage("transfers", tr("Transfers"), TransfersPage);
+  addPage("connected", tr("Security"), SecurityPage);
   addPage("tasks", tr("Saved tasks"), TasksPage);
-  mNav->setFixedHeight(3 * 42 + 4);
+  mNav->setFixedHeight(6 * 42 + 4);
   mNav->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   navLayout->addWidget(mNav);
 
@@ -311,7 +358,7 @@ void MainWindow::buildShell() {
     it->setData(TargetRole, id);
     it->setData(FilledIconRole, Theme::icon(icon + "_filled"));
   };
-  addAction("github", tr("GitHub"), "github");
+  addAction("github", tr("Project on GitHub"), "github");
   addAction("settings", tr("Settings"), "settings");
   addAction("update", tr("Update & About"), "help");
   footer->setFixedHeight(3 * 42 + 4);
@@ -336,7 +383,7 @@ void MainWindow::buildShell() {
                        ui.preferences->trigger();
                      } else if (id == "github") {
                        QDesktopServices::openUrl(
-                           QUrl("https://github.com/Jackpison/RcloneBrowser"));
+                           QUrl("https://github.com/mctransik/RcloneBrowser"));
                      } else {
                        helpMenu->exec(footer->viewport()->mapToGlobal(r.topRight()));
                      }
@@ -367,7 +414,123 @@ void MainWindow::buildShell() {
     mPages->addWidget(w);
   }
   mPages->addWidget(ui.tabs);
-  cl->addWidget(mPages);
+
+  // Operational dashboard. Values come from the loaded remotes, active jobs
+  // and detected rclone version, never from fabricated cloud usage numbers.
+  {
+    auto *dashboard = new QWidget;
+    auto *v = new QVBoxLayout(dashboard);
+    setPageMargins(v);
+    v->addWidget(makePageHeader(
+        tr("Dashboard"),
+        tr("Your clouds, running transfers and update status at a glance."),
+        nullptr, {}));
+    auto *metrics = new QGridLayout;
+    metrics->setSpacing(12);
+    auto addMetric = [&](int row, int column, const QString &title, QLabel **value) {
+      auto *card = new QFrame(dashboard);
+      card->setProperty("card", true);
+      card->setAttribute(Qt::WA_StyledBackground);
+      auto *contents = new QVBoxLayout(card);
+      contents->setContentsMargins(18, 16, 18, 16);
+      auto *label = new QLabel(title);
+      label->setObjectName("PageSubtitle");
+      contents->addWidget(label);
+      *value = new QLabel(tr("Not checked"));
+      (*value)->setObjectName("PageTitle");
+      contents->addWidget(*value);
+      metrics->addWidget(card, row, column);
+    };
+    addMetric(0, 0, tr("Configured remotes"), &mDashboardRemotes);
+    addMetric(0, 1, tr("rclone installation"), &mDashboardRclone);
+    addMetric(1, 0, tr("Running jobs"), &mDashboardTransfers);
+    mDashboardTransfers->setText("0");
+    auto *usage = new QFrame(dashboard);
+    usage->setProperty("card", true);
+    usage->setAttribute(Qt::WA_StyledBackground);
+    auto *usageLayout = new QVBoxLayout(usage);
+    usageLayout->setContentsMargins(18, 16, 18, 16);
+    usageLayout->addWidget(new QLabel(tr("Storage usage")));
+    auto *usageNote = new QLabel(tr("Usage appears only when a provider supplies reliable capacity data. "
+                                   "Crypt and underlying remotes must not be counted twice."));
+    usageNote->setWordWrap(true);
+    usageNote->setObjectName("PageSubtitle");
+    usageLayout->addWidget(usageNote);
+    metrics->addWidget(usage, 1, 1);
+    v->addLayout(metrics);
+    auto *quick = new QPushButton(tr("Open file manager"));
+    quick->setIcon(Theme::icon("folder"));
+    v->addWidget(quick, 0, Qt::AlignLeft);
+    connect(quick, &QPushButton::clicked, this,
+            [this]() { showPage(FileManagerPage); });
+    v->addStretch(1);
+    mPages->addWidget(dashboard);
+  }
+
+  mDualPane = new DualPaneWidget(&mIcons, mPages);
+  connect(mDualPane, &DualPaneWidget::addTransfer, this, &MainWindow::addTransfer);
+  connect(mDualPane, &DualPaneWidget::addMount, this, &MainWindow::addMount);
+  connect(mDualPane, &DualPaneWidget::addStream, this, &MainWindow::addStream);
+  connect(mDualPane, &DualPaneWidget::openInTab, this,
+          [this](const QString &name, const QString &type) {
+            openRemote(name, type, true);
+          });
+  mPages->addWidget(mDualPane);
+
+  // Readable security information, with unknown state until real evidence
+  // exists. A successful version check is NOT a verified update.
+  {
+    auto *security = new QWidget;
+    auto *v = new QVBoxLayout(security);
+    setPageMargins(v);
+    v->addWidget(makePageHeader(
+        tr("Security center"),
+        tr("Software versions, signed updates and verifiable build provenance."),
+        nullptr, {}));
+    auto section = [&](const QString &title, const QString &body) {
+      auto *card = new QFrame(security);
+      card->setProperty("card", true);
+      card->setAttribute(Qt::WA_StyledBackground);
+      auto *inner = new QVBoxLayout(card);
+      inner->setContentsMargins(18, 14, 18, 14);
+      auto *name = new QLabel(title);
+      name->setObjectName("PageTitle");
+      inner->addWidget(name);
+      auto *detail = new QLabel(body);
+      detail->setWordWrap(true);
+      detail->setTextInteractionFlags(Qt::TextSelectableByMouse |
+                                      Qt::LinksAccessibleByMouse);
+      inner->addWidget(detail);
+      v->addWidget(card);
+      return detail;
+    };
+    mSecurityRclone = section(tr("rclone version"), tr("Not detected yet"));
+    section(tr("Signed rclone updates"),
+            tr("The updater uses rclone selfupdate to check PGP-signed release checksums. "
+               "A last-successful-verification record is not yet implemented, "
+               "so this panel does not claim a completed verification."));
+    section(tr("Application build provenance"),
+            tr("Release attestations must be verified against the actual downloaded archive. "
+               "No local attestation verification has been performed by this interface."));
+    auto *check = new QPushButton(tr("Check for rclone updates"));
+    connect(check, &QPushButton::clicked, this,
+            [this]() { checkRcloneUpdate(true); });
+    v->addWidget(check, 0, Qt::AlignLeft);
+    v->addStretch(1);
+    mPages->addWidget(security);
+  }
+  cl->addWidget(mPages, 1);
+
+  // Compact persistent transfer indicator; opens the existing full job page.
+  mTransferStrip = new QToolButton(content);
+  mTransferStrip->setIcon(Theme::icon("transfers"));
+  mTransferStrip->setText(tr("Transfers"));
+  mTransferStrip->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  mTransferStrip->setCursor(Qt::PointingHandCursor);
+  mTransferStrip->hide();
+  cl->addWidget(mTransferStrip);
+  connect(mTransferStrip, &QToolButton::clicked, this,
+          [this]() { showPage(TransfersPage); });
 
   ui.tabs->setAttribute(Qt::WA_StyledBackground);
   ui.tabs->setDocumentMode(true);
@@ -425,23 +588,50 @@ void MainWindow::buildShell() {
     ui.open->hide();
 
     QLabel *sub = nullptr;
-    v->insertWidget(0, makePageHeader(tr("Remotes"),
-                                      tr("Your cloud storage, as configured in rclone."),
-                                      &sub, {ui.refresh, ui.config}));
+    auto *refreshUsage = new QToolButton;
+    refreshUsage->setText(tr("Get capacity"));
+    refreshUsage->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    refreshUsage->setIcon(Theme::icon("refresh"));
+    refreshUsage->setToolTip(tr("Ask each remote for capacity using rclone about (manual network requests)."));
+    connect(refreshUsage, &QToolButton::clicked, this, &MainWindow::refreshStorageCapacities);
+    auto *cards = new QToolButton;
+    cards->setIcon(Theme::icon("view_grid"));
+    cards->setToolTip(tr("Cards"));
+    cards->setCheckable(true);
+    auto *list = new QToolButton;
+    list->setIcon(Theme::icon("view_list"));
+    list->setToolTip(tr("List"));
+    list->setCheckable(true);
+    v->insertWidget(0, makePageHeader(tr("Storage"),
+                                      tr("Capacity appears where supported; no estimates or double counting."),
+                                      &sub, {refreshUsage, cards, list, ui.refresh, ui.config}));
     mHomeSubtitle = sub;
 
-    ui.remotes->setViewMode(QListView::IconMode);
     ui.remotes->setMovement(QListView::Static);
     ui.remotes->setResizeMode(QListView::Adjust);
-    ui.remotes->setWrapping(true);
-    ui.remotes->setUniformItemSizes(true);
-    ui.remotes->setGridSize(QSize(170, 132));
     ui.remotes->setIconSize(QSize(40, 40));
     ui.remotes->setWordWrap(true);
     ui.remotes->setSpacing(0);
     ui.remotes->setFrameShape(QFrame::NoFrame);
     ui.remotes->setSelectionRectVisible(false);
-    ui.remotes->setItemDelegate(new RemoteCardDelegate(ui.remotes));
+    auto *storageDelegate = new RemoteCardDelegate(ui.remotes);
+    ui.remotes->setItemDelegate(storageDelegate);
+    auto chooseView = [this, storageDelegate, cards, list](bool grid) {
+      ui.remotes->setViewMode(grid ? QListView::IconMode : QListView::ListMode);
+      ui.remotes->setWrapping(grid);
+      ui.remotes->setUniformItemSizes(true);
+      ui.remotes->setGridSize(grid ? QSize(234, 164) : QSize());
+      ui.remotes->setIconSize(grid ? QSize(40, 40) : QSize(28, 28));
+      storageDelegate->setCards(grid);
+      cards->setChecked(grid);
+      list->setChecked(!grid);
+      ui.remotes->doItemsLayout();
+      ui.remotes->viewport()->update();
+      GetSettings()->setValue("Storage/view", grid ? "cards" : "list");
+    };
+    connect(cards, &QToolButton::clicked, this, [chooseView]() { chooseView(true); });
+    connect(list, &QToolButton::clicked, this, [chooseView]() { chooseView(false); });
+    chooseView(GetSettings()->value("Storage/view", "list").toString() == "cards");
     ui.remotes->setFont(Theme::uiFont());
     ui.remotes->setMouseTracking(true);
     ui.remotes->setCursor(Qt::PointingHandCursor);
@@ -548,6 +738,7 @@ void MainWindow::buildShell() {
                    });
 
   mNav->setCurrentRow(0);
+  showPage(DashboardPage);
 }
 
 int MainWindow::remoteTab(const QString &name) const {
@@ -740,6 +931,14 @@ void MainWindow::rebuildNavRemotes() {
     it->setData(TypeRole, src->data(Qt::UserRole));
     it->setToolTip(src->text() + " · " + src->data(Qt::UserRole).toString());
   }
+  if (mDashboardRemotes) mDashboardRemotes->setText(QString::number(n));
+  if (mDualPane) {
+    QList<QPair<QString, QString>> available;
+    for (QListWidgetItem *src : sources) {
+      available.append(qMakePair(src->text(), src->data(Qt::UserRole).toString()));
+    }
+    mDualPane->setRemotes(available);
+  }
   mNavRemoteCount->setText(QString::number(n));
   mNavRemoteCount->setVisible(n > 0);
   ui.remotes->setVisible(n > 0);
@@ -765,9 +964,81 @@ void MainWindow::updateThemeButton() {
 }
 
 void MainWindow::setJobsTabText(const QString &text) {
+  if (mDashboardTransfers) {
+    mDashboardTransfers->setText(QString::number(mJobCount));
+  }
+  if (mTransferStrip) {
+    mTransferStrip->setVisible(mJobCount > 0);
+    mTransferStrip->setText(tr("%1 active transfer(s) — show details").arg(mJobCount));
+  }
   if (mNavTransfers) {
     static const QRegularExpression rx(R"(\((\d+)\))");
     const auto m = rx.match(text);
     mNavTransfers->setData(BadgeRole, m.hasMatch() ? m.captured(1).toInt() : 0);
+  }
+}
+
+
+void MainWindow::refreshStorageCapacities() {
+  // Explicitly user-initiated queries: rclone about isn't supported by all
+  // backends and may generate billable API traffic for object stores.
+  const QString rclone = GetRclone();
+  if (rclone.isEmpty()) return;
+  for (int i = 0; i < ui.remotes->count(); ++i) {
+    auto *item = ui.remotes->item(i);
+    const QString name = item->text();
+    item->setData(CapacityTotalRole, QVariant());
+    item->setData(CapacityUsedRole, QVariant());
+    item->setData(CapacityStatusRole, tr("Checking…"));
+
+    auto *p = new QProcess(this);
+    UseRclonePassword(p);
+    p->setProgram(rclone);
+    p->setArguments(QStringList() << "about" << name + ":" << "--json"
+                                   << GetRcloneConf() << "--ask-password=false");
+    connect(p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, [this, p, name](int code, QProcess::ExitStatus status) {
+      const QByteArray output = p->readAllStandardOutput();
+      QJsonParseError error;
+      const QJsonDocument doc = QJsonDocument::fromJson(output, &error);
+      for (int i = 0; i < ui.remotes->count(); ++i) {
+        auto *item = ui.remotes->item(i);
+        if (item->text() != name) continue;
+        if (status == QProcess::NormalExit && code == 0 &&
+            error.error == QJsonParseError::NoError && doc.isObject()) {
+          const QJsonObject obj = doc.object();
+          const QJsonValue total = obj.value("total");
+          const QJsonValue used = obj.value("used");
+          if (total.isDouble() && used.isDouble() &&
+              total.toDouble() > 0 && used.toDouble() >= 0) {
+            item->setData(CapacityTotalRole, qint64(total.toDouble()));
+            item->setData(CapacityUsedRole, qint64(used.toDouble()));
+            item->setData(CapacityStatusRole, QString());
+          } else {
+            item->setData(CapacityStatusRole, tr("Capacity not available"));
+          }
+        } else {
+          item->setData(CapacityStatusRole, tr("Not supported / unavailable"));
+        }
+        break;
+      }
+      p->deleteLater();
+    });
+    connect(p, &QProcess::errorOccurred, this,
+            [this, p, name](QProcess::ProcessError) {
+      if (p->state() != QProcess::NotRunning) return;
+      for (int i = 0; i < ui.remotes->count(); ++i) {
+        auto *item = ui.remotes->item(i);
+        if (item->text() == name) {
+          item->setData(CapacityStatusRole, tr("Query failed"));
+          break;
+        }
+      }
+      p->deleteLater();
+    });
+    QTimer::singleShot(25000, p, [p]() {
+      if (p->state() != QProcess::NotRunning) p->kill();
+    });
+    p->start();
   }
 }

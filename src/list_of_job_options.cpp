@@ -1,4 +1,6 @@
 #include "list_of_job_options.h"
+#include "task_storage.h"
+#include "task_list_transaction.h"
 #include <QDataStream>
 #include <qdir.h>
 #include <qlogging.h>
@@ -26,32 +28,20 @@ ListOfJobOptions *ListOfJobOptions::getInstance() {
 }
 
 bool ListOfJobOptions::Persist(JobOptions *jo) {
-  bool isNew = !this->tasks.contains(jo);
-  if (isNew)
-    this->tasks.append(jo);
-  else {
-    //    int ix = tasks.indexOf(jo);
-    //    JobOptions *old = tasks[ix];
-    //    qDebug() << QString("old [%1] New [%2]")
-    //                    .arg(old->description)
-    //                    .arg(jo->description);
-  }
-  PersistToUserData();
-  return isNew;
+  // Success means the new/edited task was written to disk, NOT "is new".
+  return TaskListTransaction::persist(tasks, jo, [this]() {
+    return PersistToUserData();
+  });
 }
 
 bool ListOfJobOptions::Forget(JobOptions *jo) {
-  bool isKnown = this->tasks.contains(jo);
-  if (!isKnown)
-    return false;
-  int ix = tasks.indexOf(jo);
-  tasks.removeAt(ix);
-  //  qDebug() << QString("removed [%1]").arg(jo->description);
-  PersistToUserData();
-  return isKnown;
+  // Restore the item and its original position if the disk save fails.
+  return TaskListTransaction::forget(tasks, jo, [this]() {
+    return PersistToUserData();
+  });
 }
 
-QFile *ListOfJobOptions::GetPersistenceFile(QIODevice::OpenModeFlag mode) {
+QString ListOfJobOptions::GetPersistenceFilePath() {
 
   QDir outputDir;
 
@@ -81,10 +71,15 @@ QFile *ListOfJobOptions::GetPersistenceFile(QIODevice::OpenModeFlag mode) {
         QDir(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation));
   }
 
-  if (!outputDir.exists()) {
-    outputDir.mkpath(".");
-  }
-  QString filePath = outputDir.absoluteFilePath(persistenceFileName);
+  if (!outputDir.exists() && !outputDir.mkpath("."))
+    return QString();
+  return outputDir.absoluteFilePath(persistenceFileName);
+}
+
+QFile *ListOfJobOptions::GetPersistenceFile(QIODevice::OpenModeFlag mode) {
+  const QString filePath = GetPersistenceFilePath();
+  if (filePath.isEmpty())
+    return nullptr;
   QFile *file = new QFile(filePath);
 
   if (!file->open(mode)) {
@@ -122,24 +117,17 @@ bool ListOfJobOptions::RestoreFromUserData(ListOfJobOptions &dataIn) {
 }
 
 bool ListOfJobOptions::PersistToUserData() {
-  QFile *file = GetPersistenceFile(
-      QIODevice::WriteOnly); // note this mode implies Truncate also
-  if (file == nullptr)
-    return false;
-  QDataStream outstream(file);
-  outstream.setVersion(QDataStream::Qt_5_2);
-
-  for (JobOptions *it : tasks) {
-    outstream << *it;
-  }
-
-  file->flush();
-  file->close();
+  const QString path = GetPersistenceFilePath();
+  const bool saved = TaskStorage::saveAtomically(
+      path, [this](QDataStream &outstream) {
+        for (JobOptions *it : tasks)
+          outstream << *it;
+        return true;
+      });
+  if (!saved)
+    return false; // preserve the old file if serialization or commit failed
 
   emit tasksListUpdated();
-
-  delete file;
-
   return true;
 }
 

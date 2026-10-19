@@ -1,4 +1,5 @@
 #include "stream_widget.h"
+#include "log_safety.h"
 #include "theme.h"
 
 StreamWidget::StreamWidget(QProcess *rclone, QProcess *player,
@@ -47,7 +48,8 @@ StreamWidget::StreamWidget(QProcess *rclone, QProcess *player,
 
   QObject::connect(mRclone, &QProcess::readyRead, this, [=, this]() {
     while (mRclone->canReadLine()) {
-      ui.output->appendPlainText(mRclone->readLine().trimmed());
+      ui.output->appendPlainText(LogSafety::maskKnownCredentials(
+          QString::fromUtf8(mRclone->readLine()).trimmed()));
     }
   });
 

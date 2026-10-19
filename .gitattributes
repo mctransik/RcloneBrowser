@@ -1,0 +1,5 @@
+# Keep byte-pinned upstream license texts unchanged in all CI working trees.
+# Windows Git checkout can otherwise turn LF into CRLF and invalidate
+# the upstream Git blob digest even though the repository blob is correct.
+/third_party/licenses/rclone-v1.75.2-COPYING.txt text eol=lf
+/src/icons/fluent/LICENSE.txt text eol=lf

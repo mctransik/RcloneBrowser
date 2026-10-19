@@ -17,6 +17,9 @@ void SetRcloneConf(const QString &rcloneConf);
 
 void UseRclonePassword(QProcess *process);
 void SetRclonePassword(const QString &rclonePassword);
+// Configure application-managed proxy URLs for future rclone children only.
+void SetRcloneProxy(bool enabled, const QString &http, const QString &https,
+                    const QString &noProxy);
 
 QStringList GetDriveSharedWithMe();
 QStringList GetDefaultRcloneOptionsList();

@@ -1,4 +1,5 @@
 #include "transfer_dialog.h"
+#include "task_secret_risk.h"
 #include "list_of_job_options.h"
 #include "utils.h"
 
@@ -98,10 +99,42 @@ TransferDialog::TransferDialog(bool isDownload, bool isDrop,
                            "Invalid Task, source and destination required!");
       return;
     }
+    // tasks.bin uses a plain QDataStream, not encryption. Warn before
+    // changing an existing task in memory or writing anything to disk.
+    // The warning deliberately does not echo the suspected secret.
+    if (TaskSecretRisk::mayContainCredentials(
+            ui.textExtra->text(), ui.textSource->text(), ui.textDest->text())) {
+      if (QMessageBox::warning(
+              this, tr("Unencrypted saved task"),
+              tr("These task options or paths may contain a password, token, "
+                 "or authenticated URL. Saved tasks are NOT encrypted: anyone "
+                 "who can read tasks.bin may recover these values.\n\n"
+                 "Prefer storing credentials in an encrypted rclone "
+                 "configuration rather than in task arguments.\n\n"
+                 "Save this task anyway?"),
+              QMessageBox::Save | QMessageBox::Cancel,
+              QMessageBox::Cancel) != QMessageBox::Save)
+        return;
+    }
+    // In edit mode getJobOptions() updates the original in-memory record.
+    // Preserve its prior state so a failed disk write does not leave an
+    // apparently-saved edit in the task list.
+    const bool editingSavedTask = mIsEditMode && mJobOptions != nullptr;
+    JobOptions previous;
+    if (editingSavedTask)
+      previous = *mJobOptions;
     JobOptions *jobo = getJobOptions();
-    ListOfJobOptions::getInstance()->Persist(jobo);
-    // always close on save
-    // if (mIsEditMode)
+    if (!ListOfJobOptions::getInstance()->Persist(jobo)) {
+      if (editingSavedTask)
+        *jobo = previous;
+      QMessageBox::critical(
+          this, tr("Task not saved"),
+          tr("The task could not be saved. Your changes are still in this "
+             "dialog, and the previous saved task list has been kept. "
+             "Please check that the application data folder is writable "
+             "and try again."));
+      return; // keep the dialog open for a retry
+    }
     this->close();
   });
 

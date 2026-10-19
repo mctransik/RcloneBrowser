@@ -16,6 +16,18 @@ public:
   // Shown under the remote name in the page header (e.g. "drive").
   void setRemoteType(const QString &type);
 
+  // Read-only selection helpers for the optional two-pane workspace.
+  QString selectedRemotePath() const;
+  QString selectedEntryName() const;
+  bool selectedEntryIsFolder() const;
+  QString currentRemoteFolder() const;
+  QList<QAbstractItemView *> dragViews() const;
+  bool dragEntryAt(const QAbstractItemView *view,
+                   const QPoint &viewportPos, QString *path,
+                   QString *name, bool *folder) const;
+  QString dropFolderAt(const QAbstractItemView *view,
+                       const QPoint &viewportPos) const;
+
 signals:
   void addTransfer(const QString &message, const QString &source,
                    const QString &remote, const QStringList &args);
@@ -26,6 +38,7 @@ signals:
 
 private:
   Ui::RemoteWidget ui;
+  QString mRemote;
   QLabel *mTypeLabel = nullptr;
   QLineEdit *mFilter = nullptr;
   QToolButton *mUp = nullptr;
