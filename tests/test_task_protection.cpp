@@ -23,6 +23,22 @@ private slots:
     QVERIFY(out.isEmpty());
   }
 
+  void rejectsTruncatedProtectedMagicInsteadOfTreatingItAsLegacy() {
+    for (const QByteArray header : {
+             QByteArrayLiteral("RBTS"),
+             QByteArrayLiteral("RBTSE"),
+             QByteArrayLiteral("RBTSEN"),
+             QByteArrayLiteral("RBTSENC")}) {
+      QCOMPARE(TaskProtection::inspectFormat(header),
+               TaskProtection::Format::UnsupportedProtected);
+      QByteArray out("old-sensitive-content");
+      QVERIFY(!TaskProtection::decryptForWindowsUser(header, &out));
+      QVERIFY(out.isEmpty());
+    }
+    QCOMPARE(TaskProtection::inspectFormat(QByteArrayLiteral("RBTA")),
+             TaskProtection::Format::LegacyPlaintext);
+  }
+
   void rejectsPlaintextOrTruncatedProtectedInput() {
     QByteArray out("previous");
     QVERIFY(!TaskProtection::decryptForWindowsUser(
