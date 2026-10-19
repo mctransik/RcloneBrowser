@@ -17,12 +17,16 @@ ROOT_FILES = {"RcloneBrowser.exe", "RcloneBrowser.ini", "qt.conf"}
 DOC_FILES = {
     "README.md", "LICENSE", "CHANGELOG.md", "Rclone-Browser-Guide.pdf",
     "BUILD_PROVENANCE.txt", "PACKAGE_SHA256SUMS.txt",
+    "RCLONE_LICENSE.txt", "FLUENT_UI_SYSTEM_ICONS_LICENSE.txt",
+    "THIRD_PARTY_NOTICES.md",
 }
 REQUIRED = {
     "RcloneBrowser.exe", "RcloneBrowser.ini", "qt.conf",
     "rclone/rclone.exe", "docs/README.md", "docs/LICENSE",
     "docs/CHANGELOG.md", "docs/Rclone-Browser-Guide.pdf",
     "docs/BUILD_PROVENANCE.txt", "docs/PACKAGE_SHA256SUMS.txt",
+    "docs/RCLONE_LICENSE.txt", "docs/FLUENT_UI_SYSTEM_ICONS_LICENSE.txt",
+    "docs/THIRD_PARTY_NOTICES.md",
 }
 SENSITIVE_TEXT = [
     re.compile(rb"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),

@@ -140,6 +140,12 @@ jobs:
           Copy-Item docs\remote-icons.md "$dir\icons\remotes\README.md"
           New-Item -ItemType Directory -Force "$dir\docs" | Out-Null
           Copy-Item README.md, LICENSE, CHANGELOG.md, docs\Rclone-Browser-Guide.pdf "$dir\docs\"
+          # Bundle exact upstream copyright/license texts before hashing.
+          Copy-Item third_party\licenses\rclone-v1.75.2-COPYING.txt "$dir\docs\RCLONE_LICENSE.txt"
+          Copy-Item src\icons\fluent\LICENSE.txt "$dir\docs\FLUENT_UI_SYSTEM_ICONS_LICENSE.txt"
+          Copy-Item docs\THIRD_PARTY_NOTICES.md "$dir\docs\THIRD_PARTY_NOTICES.md"
+          python scripts/verify_third_party_notices.py --source-dir . --notice-dir "$dir/docs" --rclone-version "$tag"
+          if ($LASTEXITCODE -ne 0) { throw "Third-party license notice verification failed." }
 
           # Build provenance is informational, not a malware verdict or signature.
           $sourceCommit = (git rev-parse HEAD).Trim()
@@ -513,6 +519,12 @@ jobs:
           echo "$RCLONE_LINUX_ZIP_SHA256  $zip" | sha256sum -c -
           python3 -m zipfile -e "$zip" rclone-x
           install -m 755 "$(find rclone-x -name rclone -type f | head -1)" AppDir/usr/bin/rclone
+
+          # Preserve original rclone/Fluent notices in the Linux AppDir.
+          cp third_party/licenses/rclone-v1.75.2-COPYING.txt AppDir/usr/share/rclone-browser/RCLONE_LICENSE.txt
+          cp src/icons/fluent/LICENSE.txt AppDir/usr/share/rclone-browser/FLUENT_UI_SYSTEM_ICONS_LICENSE.txt
+          cp docs/THIRD_PARTY_NOTICES.md AppDir/usr/share/rclone-browser/THIRD_PARTY_NOTICES.md
+          python3 scripts/verify_third_party_notices.py --source-dir . --notice-dir AppDir/usr/share/rclone-browser --rclone-version "$tag"
 
           # Embed traceability in the AppImage (not an independent trust seal).
           printf 'source_commit=%s\ngithub_run_id=%s\ngithub_run_attempt=%s\nrclone_version=%s\nrclone_archive=%s\nrclone_archive_sha256=%s\nqt_version=6.10.3\n' \

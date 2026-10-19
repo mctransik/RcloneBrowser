@@ -27,6 +27,9 @@ class ReleasePayloadGuardTests(unittest.TestCase):
             "docs/CHANGELOG.md": b"test changelog",
             "docs/Rclone-Browser-Guide.pdf": b"%PDF-1.4 synthetic",
             "docs/BUILD_PROVENANCE.txt": b"source_commit=000\n",
+            "docs/RCLONE_LICENSE.txt": b"synthetic rclone license",
+            "docs/FLUENT_UI_SYSTEM_ICONS_LICENSE.txt": b"synthetic Fluent license",
+            "docs/THIRD_PARTY_NOTICES.md": b"synthetic incomplete-license notice",
         }
         for name, content in samples.items():
             p = self.root / name
@@ -43,7 +46,19 @@ class ReleasePayloadGuardTests(unittest.TestCase):
             "\n".join(lines) + "\n", encoding="ascii")
 
     def test_expected_package_passes(self):
-        self.assertEqual(audit_package(self.root), 14)
+        self.assertEqual(audit_package(self.root), 17)
+
+    def test_missing_notice_is_blocked_even_with_updated_manifest(self):
+        (self.root / "docs/RCLONE_LICENSE.txt").unlink()
+        self.refresh_manifest()
+        with self.assertRaisesRegex(ValueError, "Missing required"):
+            audit_package(self.root)
+
+    def test_extra_unreviewed_license_file_is_blocked(self):
+        (self.root / "docs/UNREVIEWED_LICENSE.txt").write_text("unknown")
+        self.refresh_manifest()
+        with self.assertRaisesRegex(ValueError, "Unexpected"):
+            audit_package(self.root)
 
     def test_rclone_conf_is_blocked_even_with_valid_manifest(self):
         (self.root / "rclone.conf").write_text("[cloud]\ntoken=secret")
