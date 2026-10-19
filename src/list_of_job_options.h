@@ -17,6 +17,8 @@ public:
   bool Persist(JobOptions *jo);
   bool Forget(JobOptions *jo);
   QList<JobOptions *> &getTasks() { return tasks; }
+  // Fail closed after an unreadable or unsupported saved-task file.
+  bool isRecoveryReadOnly() const { return recoveryReadOnly; }
 
 signals:
   void tasksListUpdated();
@@ -29,5 +31,6 @@ private:
   static QFile *GetPersistenceFile(QIODevice::OpenModeFlag mode);
 
   QList<JobOptions *> tasks;
+  bool recoveryReadOnly = false;
   bool PersistToUserData();
 };
