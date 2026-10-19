@@ -1,7 +1,14 @@
 #include "list_of_job_options.h"
 #include "task_storage.h"
+#include "task_protection.h"
 #include "task_list_transaction.h"
+#include <QBuffer>
 #include <QDataStream>
+#include <QMessageBox>
+#include <QTimer>
+#include <QtAlgorithms>
+#include <memory>
+#include <utility>
 #include <qdir.h>
 #include <qlogging.h>
 #include <qstandardpaths.h>
@@ -22,12 +29,24 @@ ListOfJobOptions::ListOfJobOptions() {}
 ListOfJobOptions *ListOfJobOptions::getInstance() {
   if (SavedJobOptions == nullptr) {
     SavedJobOptions = new ListOfJobOptions();
-    RestoreFromUserData(*SavedJobOptions);
+    if (!RestoreFromUserData(*SavedJobOptions)) {
+      // Defer the warning until the event loop can show a dialog. Keep task
+      // saving disabled: an unreadable file must not become an empty tasks.bin.
+      QTimer::singleShot(0, SavedJobOptions, [] {
+        QMessageBox::warning(
+            nullptr, QObject::tr("Saved tasks locked"),
+            QObject::tr("Saved tasks could not be safely loaded. Existing task "
+                        "data has not been changed. Saving and deleting saved "
+                        "tasks are disabled until the file is recovered. "
+                        "Check the original file or restore a trusted backup."));
+      });
+    }
   }
   return SavedJobOptions;
 }
 
 bool ListOfJobOptions::Persist(JobOptions *jo) {
+  if (recoveryReadOnly) return false;
   // Success means the new/edited task was written to disk, NOT "is new".
   return TaskListTransaction::persist(tasks, jo, [this]() {
     return PersistToUserData();
@@ -35,6 +54,7 @@ bool ListOfJobOptions::Persist(JobOptions *jo) {
 }
 
 bool ListOfJobOptions::Forget(JobOptions *jo) {
+  if (recoveryReadOnly) return false;
   // Restore the item and its original position if the disk save fails.
   return TaskListTransaction::forget(tasks, jo, [this]() {
     return PersistToUserData();
@@ -91,32 +111,58 @@ QFile *ListOfJobOptions::GetPersistenceFile(QIODevice::OpenModeFlag mode) {
 }
 
 bool ListOfJobOptions::RestoreFromUserData(ListOfJobOptions &dataIn) {
-  QFile *file = GetPersistenceFile(QIODevice::ReadOnly);
-  if (file == nullptr)
+  const QString path = GetPersistenceFilePath();
+  QByteArray stored;
+  const TaskStorage::ReadResult read = TaskStorage::readTaskBytes(path, &stored);
+  if (read == TaskStorage::ReadResult::Absent)
+    return true; // A genuinely missing file means a new empty task list.
+  if (read != TaskStorage::ReadResult::Loaded ||
+      TaskProtection::inspectFormat(stored) !=
+          TaskProtection::Format::LegacyPlaintext) {
+    // Protected formats are not integrated yet. Never downgrade to plaintext
+    // or overwrite an unreadable/corrupt existing file.
+    dataIn.recoveryReadOnly = true;
     return false;
-  QDataStream instream(file);
-  instream.setVersion(QDataStream::Qt_5_2);
-
-  while (!instream.atEnd()) {
-    try {
-      JobOptions *jo = new JobOptions();
-      instream >> *jo;
-      dataIn.tasks.append(jo);
-    } catch (SerializationException &ex) {
-      //      qDebug() << QString("failed to restore tasks: ") << ex.Message;
-      file->close();
-      delete file;
-      return false;
-    }
   }
 
-  file->close();
-  delete file;
-
+  QBuffer input(&stored);
+  if (!input.open(QIODevice::ReadOnly)) {
+    dataIn.recoveryReadOnly = true;
+    return false;
+  }
+  QDataStream stream(&input);
+  stream.setVersion(QDataStream::Qt_5_2);
+  QList<JobOptions *> staged;
+  bool valid = true;
+  while (!stream.atEnd()) {
+    auto candidate = std::make_unique<JobOptions>();
+    try {
+      stream >> *candidate;
+    } catch (const SerializationException &) {
+      valid = false;
+      break;
+    }
+    if (stream.status() != QDataStream::Ok) {
+      valid = false;
+      break;
+    }
+    staged.append(candidate.release());
+  }
+  if (stream.status() != QDataStream::Ok)
+    valid = false;
+  if (!valid) {
+    // Do not publish partial results; keep the existing file and lock writes.
+    qDeleteAll(staged);
+    dataIn.recoveryReadOnly = true;
+    return false;
+  }
+  qDeleteAll(dataIn.tasks);
+  dataIn.tasks = std::move(staged);
   return true;
 }
 
 bool ListOfJobOptions::PersistToUserData() {
+  if (recoveryReadOnly) return false;
   const QString path = GetPersistenceFilePath();
   const bool saved = TaskStorage::saveAtomically(
       path, [this](QDataStream &outstream) {
