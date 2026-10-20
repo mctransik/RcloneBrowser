@@ -1,6 +1,7 @@
 #include "list_of_job_options.h"
 #include "task_storage.h"
 #include "task_restore.h"
+#include "task_job_codec.h"
 #include "task_protection.h"
 #include "task_list_transaction.h"
 #include <QDataStream>
@@ -10,13 +11,6 @@
 #include <qlogging.h>
 #include <qstandardpaths.h>
 #include <utils.h>
-
-static QDataStream &operator>>(QDataStream &dataStream, JobOptions &jo);
-static QDataStream &operator<<(QDataStream &dataStream, JobOptions &jo);
-static QDataStream &operator>>(QDataStream &in, JobOptions::Operation &e);
-static QDataStream &operator>>(QDataStream &in, JobOptions::SyncTiming &e);
-static QDataStream &operator>>(QDataStream &in, JobOptions::CompareOption &e);
-static QDataStream &operator>>(QDataStream &in, JobOptions::JobType &e);
 
 ListOfJobOptions *ListOfJobOptions::SavedJobOptions = nullptr;
 const QString ListOfJobOptions::persistenceFileName = "tasks.bin";
@@ -124,7 +118,9 @@ bool ListOfJobOptions::RestoreFromUserData(ListOfJobOptions &dataIn) {
 
   if (!TaskRestore::decodeLegacyTransactional(
           stored, dataIn.tasks,
-          [](QDataStream &stream, JobOptions &record) { stream >> record; })) {
+          [](QDataStream &stream, JobOptions &record) {
+            TaskJobCodec::read(stream, record);
+          })) {
     dataIn.recoveryReadOnly = true;
     return false;
   }
@@ -137,7 +133,7 @@ bool ListOfJobOptions::PersistToUserData() {
   const bool saved = TaskStorage::saveAtomically(
       path, [this](QDataStream &outstream) {
         for (JobOptions *it : tasks)
-          outstream << *it;
+          TaskJobCodec::write(outstream, *it);
         return true;
       });
   if (!saved)
@@ -147,71 +143,3 @@ bool ListOfJobOptions::PersistToUserData() {
   return true;
 }
 
-QDataStream &operator<<(QDataStream &stream, JobOptions &jo) {
-  stream << jo.myName() << JobOptions::classVersion << jo.description
-         << jo.jobType << jo.operation << /* jo.dryRun <<*/ jo.sync
-         << jo.syncTiming << jo.skipNewer << jo.skipExisting << jo.compare
-         << jo.compareOption << jo.verbose << jo.sameFilesystem
-         << jo.dontUpdateModified << jo.transfers << jo.checkers << jo.bandwidth
-         << jo.minSize << jo.minAge << jo.maxAge << jo.maxDepth
-         << jo.connectTimeout << jo.idleTimeout << jo.retries
-         << jo.lowLevelRetries << jo.deleteExcluded << jo.excluded << jo.extra
-         << jo.DriveSharedWithMe << jo.source << jo.dest << jo.isFolder
-         << jo.uniqueId;
-
-  return stream;
-}
-
-QDataStream &operator>>(QDataStream &stream, JobOptions &jo) {
-  QString actualName;
-  qint32 actualVersion;
-
-  stream >> actualName;
-  if (QString::compare(actualName, jo.myName()) != 0)
-    throw SerializationException("incorrect class");
-
-  stream >> actualVersion;
-  if (actualVersion > JobOptions::classVersion)
-    throw SerializationException("stored version is newer");
-
-  stream >> jo.description >> jo.jobType >> jo.operation >>
-      /* jo.dryRun >> */ jo.sync >> jo.syncTiming >> jo.skipNewer >>
-      jo.skipExisting >> jo.compare >> jo.compareOption >> jo.verbose >>
-      jo.sameFilesystem >> jo.dontUpdateModified >> jo.transfers >>
-      jo.checkers >> jo.bandwidth >> jo.minSize >> jo.minAge >> jo.maxAge >>
-      jo.maxDepth >> jo.connectTimeout >> jo.idleTimeout >> jo.retries >>
-      jo.lowLevelRetries >> jo.deleteExcluded >> jo.excluded >> jo.extra >>
-      jo.DriveSharedWithMe >> jo.source >> jo.dest;
-
-  // as fields are added in later revisions, check actualVersion here and
-  // conditionally extract any new fields iff they are expected based on the
-  // stream value
-  if (actualVersion >= 2) {
-    stream >> jo.isFolder;
-    if (actualVersion >= 3) {
-      stream >> jo.uniqueId;
-    }
-  }
-
-  return stream;
-}
-
-QDataStream &operator>>(QDataStream &in, JobOptions::Operation &e) {
-  in >> (quint32 &)e;
-  return in;
-}
-
-QDataStream &operator>>(QDataStream &in, JobOptions::SyncTiming &e) {
-  in >> (quint32 &)e;
-  return in;
-}
-
-QDataStream &operator>>(QDataStream &in, JobOptions::CompareOption &e) {
-  in >> (quint32 &)e;
-  return in;
-}
-
-QDataStream &operator>>(QDataStream &in, JobOptions::JobType &e) {
-  in >> (quint32 &)e;
-  return in;
-}
