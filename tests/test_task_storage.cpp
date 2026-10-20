@@ -57,6 +57,31 @@ private slots:
     QVERIFY(bytes.isEmpty());
   }
 
+  void acceptsFileAtExactSafetyBoundary() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = temp.filePath("tasks.bin");
+    constexpr qint64 limit = 64LL * 1024 * 1024;
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.resize(limit));
+    file.close();
+
+    QByteArray bytes;
+    QCOMPARE(TaskStorage::readTaskBytes(path, &bytes),
+             TaskStorage::ReadResult::Loaded);
+    QCOMPARE(static_cast<qint64>(bytes.size()), limit);
+    QCOMPARE(bytes.at(0), char(0));
+    QCOMPARE(bytes.at(bytes.size() - 1), char(0));
+  }
+
+  void nullDestinationIsRejected() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QCOMPARE(TaskStorage::readTaskBytes(temp.filePath("tasks.bin"), nullptr),
+             TaskStorage::ReadResult::Unreadable);
+  }
+
   void rejectsOversizedFileForRecovery() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -72,6 +97,24 @@ private slots:
   }
 
 #ifndef Q_OS_WIN
+  void rejectsBrokenSymlinkInsteadOfTreatingItAsMissing() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString target = temp.filePath("target.bin");
+    const QString link = temp.filePath("tasks.bin");
+    QFile file(target);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("task", 4), qint64(4));
+    file.close();
+    if (!QFile::link(target, link))
+      QSKIP("Filesystem does not permit symlinks");
+    QVERIFY(QFile::remove(target));
+    QByteArray bytes;
+    QCOMPARE(TaskStorage::readTaskBytes(link, &bytes),
+             TaskStorage::ReadResult::Unreadable);
+    QVERIFY(bytes.isEmpty());
+  }
+
   void rejectsSymlinkedTaskFile() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
