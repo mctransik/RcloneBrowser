@@ -131,6 +131,13 @@ if(RB_BUILD_TESTS)
                           RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME task_storage COMMAND test_task_storage)
 
+    add_executable(test_task_restore ../tests/test_task_restore.cpp task_restore.h)
+    target_include_directories(test_task_restore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_task_restore PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_task_restore PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME task_restore COMMAND test_task_restore)
+
     add_executable(test_task_protection ../tests/test_task_protection.cpp
                    task_protection.cpp task_protection.h)
     target_include_directories(test_task_protection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
