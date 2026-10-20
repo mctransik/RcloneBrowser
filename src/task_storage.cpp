@@ -24,9 +24,13 @@ ReadResult readTaskBytes(const QString &path, QByteArray *contents) {
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly))
     return ReadResult::Unreadable;
-  QByteArray bytes = file.readAll();
+  // Bound the actual read too. A file can grow between QFileInfo::size()
+  // and the read, so readAll() would otherwise bypass the size limit.
+  QByteArray bytes = file.read(maxTaskFileSize + 1);
   if (file.error() != QFileDevice::NoError ||
-      static_cast<qint64>(bytes.size()) != info.size())
+      static_cast<qint64>(bytes.size()) > maxTaskFileSize ||
+      static_cast<qint64>(bytes.size()) != info.size() ||
+      file.size() != info.size() || !file.atEnd())
     return ReadResult::Unreadable;
   *contents = std::move(bytes);
   return ReadResult::Loaded;
