@@ -49,12 +49,42 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
 
+      - name: Fetch pinned libsodium for isolated Windows tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ProgressPreference = "SilentlyContinue"
+          # Exact upstream immutable 1.0.22 point release; the public SHA-256
+          # is recorded on the maintainer's GitHub release page.
+          # Deliberately NOT part of the app package or a release gate yet.
+          $filename = "libsodium-1.0.22-msvc.zip"
+          $expected = "3e03a726fac4bc09cb61d8f29d658ef7a5eca0811de59082130414f7ca2e4279"
+          Invoke-WebRequest "https://download.libsodium.org/libsodium/releases/$filename" -OutFile $filename
+          $actual = (Get-FileHash -LiteralPath $filename -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "Pinned libsodium test archive hash mismatch. Refusing to unpack."
+          }
+          $dest = Join-Path $env:RUNNER_TEMP "rb-libsodium-probe"
+          Expand-Archive -LiteralPath $filename -DestinationPath $dest
+          $root = Join-Path $dest "libsodium"
+          $headers = Join-Path $root "include/sodium.h"
+          $dll = Join-Path $root "x64/Release/v143/dynamic/libsodium.dll"
+          $importLib = Join-Path $root "x64/Release/v143/dynamic/libsodium.lib"
+          foreach ($path in @($headers, $dll, $importLib)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Pinned libsodium MSVC test archive lacks expected files."
+            }
+          }
+          "RB_SODIUM_PROBE_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Verified the pinned point-release archive SHA-256; test-only dependency prepared."
+          # Detached signature verification still required for production integration.
+
       - name: Configure, build and test
         shell: cmd
         run: |
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSDIR=%%i"
           call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release || exit /b 1
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_BUILD_PORTABLE_CRYPTO_PROBE=ON || exit /b 1
           cmake --build build || exit /b 1
           REM Verbose CTest output is required to diagnose Windows
           REM credential-manager behavior on GitHub-hosted logon sessions.

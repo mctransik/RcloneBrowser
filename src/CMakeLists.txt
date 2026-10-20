@@ -155,16 +155,53 @@ if(RB_BUILD_TESTS)
     add_test(NAME task_job_codec COMMAND test_task_job_codec)
 
     if(RB_BUILD_PORTABLE_CRYPTO_PROBE)
-      find_package(PkgConfig REQUIRED)
-      pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
+      # Research target only. Never link libsodium into the actual application.
+      # The CI Windows probe uses a SHA-256-pinned upstream MSVC DLL+import
+      # library. Linux uses the distro's development package via pkg-config.
+      if(WIN32)
+        if(NOT DEFINED ENV{RB_SODIUM_PROBE_ROOT} OR
+           "$ENV{RB_SODIUM_PROBE_ROOT}" STREQUAL "")
+          message(FATAL_ERROR
+            "RB_SODIUM_PROBE_ROOT is required for the Windows test-only probe")
+        endif()
+        set(SODIUM_PROBE_ROOT "$ENV{RB_SODIUM_PROBE_ROOT}")
+        set(SODIUM_PROBE_DLL
+            "${SODIUM_PROBE_ROOT}/x64/Release/v143/dynamic/libsodium.dll")
+        set(SODIUM_PROBE_LIB
+            "${SODIUM_PROBE_ROOT}/x64/Release/v143/dynamic/libsodium.lib")
+        if(NOT EXISTS "${SODIUM_PROBE_ROOT}/include/sodium.h" OR
+           NOT EXISTS "${SODIUM_PROBE_DLL}" OR
+           NOT EXISTS "${SODIUM_PROBE_LIB}")
+          message(FATAL_ERROR
+            "Expected libsodium MSVC test archive layout is missing")
+        endif()
+        add_library(test_sodium_dependency SHARED IMPORTED)
+        set_target_properties(test_sodium_dependency PROPERTIES
+          IMPORTED_LOCATION "${SODIUM_PROBE_DLL}"
+          IMPORTED_IMPLIB "${SODIUM_PROBE_LIB}"
+          INTERFACE_INCLUDE_DIRECTORIES "${SODIUM_PROBE_ROOT}/include")
+        set(SODIUM_PROBE_TARGET test_sodium_dependency)
+      else()
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
+        set(SODIUM_PROBE_TARGET PkgConfig::SODIUM)
+      endif()
+
       add_executable(test_portable_crypto_probe
                      ../tests/test_portable_crypto_probe.cpp)
       target_include_directories(test_portable_crypto_probe PRIVATE
                                  ${CMAKE_CURRENT_SOURCE_DIR})
       target_link_libraries(test_portable_crypto_probe PRIVATE
-                            Qt::Core Qt::Test PkgConfig::SODIUM)
+                            Qt::Core Qt::Test ${SODIUM_PROBE_TARGET})
       set_target_properties(test_portable_crypto_probe PROPERTIES
                             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+      if(WIN32)
+        # DLL only beside the throwaway test executable. Never copy to dist/.
+        add_custom_command(TARGET test_portable_crypto_probe POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${SODIUM_PROBE_DLL}" "$<TARGET_FILE_DIR:test_portable_crypto_probe>"
+          VERBATIM)
+      endif()
       add_test(NAME portable_crypto_probe COMMAND test_portable_crypto_probe)
     endif()
 
