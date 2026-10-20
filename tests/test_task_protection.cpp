@@ -12,6 +12,24 @@ private slots:
              TaskProtection::Format::LegacyPlaintext);
   }
 
+  void recognizesReservedPortableV2ButNeverDecryptsItAsDpapiV1() {
+    // The format is only reserved. An eight-byte magic by itself is NOT
+    // evidence of a valid encrypted envelope, and the legacy DPAPI decoder
+    // must never process it.
+    for (const QByteArray stored : {
+             QByteArrayLiteral("RBTSENC2"),
+             QByteArrayLiteral("RBTSENC2synthetic-not-ciphertext")}) {
+      QCOMPARE(TaskProtection::inspectFormat(stored),
+               TaskProtection::Format::PortablePasswordV2Reserved);
+      QByteArray plaintext("previous-value");
+      QString error;
+      QVERIFY(!TaskProtection::decryptForWindowsUser(stored, &plaintext,
+                                                     &error));
+      QVERIFY(plaintext.isEmpty());
+      QVERIFY(!error.isEmpty());
+    }
+  }
+
   void rejectsUnknownFutureProtectedVersion() {
     QCOMPARE(TaskProtection::inspectFormat(QByteArrayLiteral("RBTSENC9data")),
              TaskProtection::Format::UnsupportedProtected);
