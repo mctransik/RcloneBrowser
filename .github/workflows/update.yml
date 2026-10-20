@@ -473,11 +473,11 @@ jobs:
           sudo apt-get install -y -q ninja-build libgl1-mesa-dev libegl1 libxkbcommon-x11-0 \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
             libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libfontconfig1 \
-            libdbus-1-3 xvfb file gnupg
+            libdbus-1-3 xvfb file gnupg pkg-config libsodium-dev
 
       - name: Configure, build and test
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_BUILD_PORTABLE_CRYPTO_PROBE=ON
           cmake --build build
           ctest --test-dir build --output-on-failure
 
