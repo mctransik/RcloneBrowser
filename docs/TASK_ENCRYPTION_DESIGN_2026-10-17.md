@@ -1,5 +1,11 @@
 # Saved transfer task encryption: staged design (2026-10-17)
 
+> **Design superseded on 2026-10-20:** The earlier DPAPI-only default
+> proposed below is no longer the planned default. See
+> [Portable password + optional Windows quick unlock](PORTABLE_TASK_ENCRYPTION_PASSWORD_DPAPI_2026-10-20.md).
+> This is preserved as historical prototype documentation. No live migration
+> or portable encryption is enabled by either document.
+
 > **Development-stage codec only. No task files are encrypted or migrated by this commit.**
 > Release remains disabled and the Firefox malware warning remains unresolved.
 
