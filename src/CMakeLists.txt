@@ -104,6 +104,11 @@ if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE shell32 ole32 dwmapi advapi32 crypt32)
 endif()
 
+# Isolated libsodium research suite. Never linked into the application or
+# packaged binaries. OFF unless CI explicitly opts in with a system library.
+option(RB_BUILD_PORTABLE_CRYPTO_PROBE
+       "Build libsodium primitive tests (experimental, never packaged)" OFF)
+
 # Parser unit tests (no GUI, no rclone needed).
 option(RB_BUILD_TESTS "Build unit tests" ON)
 if(RB_BUILD_TESTS)
@@ -148,6 +153,20 @@ if(RB_BUILD_TESTS)
     set_target_properties(test_task_job_codec PROPERTIES
                           RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME task_job_codec COMMAND test_task_job_codec)
+
+    if(RB_BUILD_PORTABLE_CRYPTO_PROBE)
+      find_package(PkgConfig REQUIRED)
+      pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
+      add_executable(test_portable_crypto_probe
+                     ../tests/test_portable_crypto_probe.cpp)
+      target_include_directories(test_portable_crypto_probe PRIVATE
+                                 ${CMAKE_CURRENT_SOURCE_DIR})
+      target_link_libraries(test_portable_crypto_probe PRIVATE
+                            Qt::Core Qt::Test PkgConfig::SODIUM)
+      set_target_properties(test_portable_crypto_probe PROPERTIES
+                            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+      add_test(NAME portable_crypto_probe COMMAND test_portable_crypto_probe)
+    endif()
 
     add_executable(test_task_protection ../tests/test_task_protection.cpp
                    task_protection.cpp task_protection.h)
