@@ -14,6 +14,7 @@
 namespace TaskProtection {
 namespace {
 const QByteArray kEnvelopeMagic = QByteArrayLiteral("RBTSENC1");
+const QByteArray kReservedPortableMagic = QByteArrayLiteral("RBTSENC2");
 const QByteArray kMagicPrefix = QByteArrayLiteral("RBTSENC");
 const QByteArray kInnerMarker = QByteArrayLiteral("RBTaskPayload/1:");
 
@@ -43,6 +44,10 @@ void zeroMemory(QByteArray *bytes) {
 
 Format inspectFormat(const QByteArray &stored) {
   if (stored.startsWith(kEnvelopeMagic)) return Format::WindowsDpapiV1;
+  // Detection only. Password-portable v2 encryption/decryption does NOT yet
+  // exist; the production loader must continue to refuse this format.
+  if (stored.startsWith(kReservedPortableMagic))
+    return Format::PortablePasswordV2Reserved;
   if (stored.startsWith(kMagicPrefix)) return Format::UnsupportedProtected;
   // A truncated envelope header must never be routed to the legacy decoder.
   // Use at least four matching magic bytes to avoid treating tiny/empty legacy
