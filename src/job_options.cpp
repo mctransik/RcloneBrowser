@@ -5,22 +5,6 @@
 #ifdef _WIN32
 #pragma warning(disable : 4505)
 #endif
-JobOptions::JobOptions(bool isDownload) : JobOptions() {
-  setJobType(isDownload);
-  uniqueId = QUuid::createUuid();
-}
-
-JobOptions::JobOptions()
-    : jobType(UnknownJobType), operation(UnknownOp), dryRun(false), sync(false),
-      syncTiming(UnknownTiming), skipNewer(false), skipExisting(false),
-      compare(false), compareOption(), verbose(false), sameFilesystem(false),
-      dontUpdateModified(false), maxDepth(0), deleteExcluded(false),
-      isFolder(false) {}
-
-const qint32 JobOptions::classVersion = 3;
-
-JobOptions::~JobOptions() {}
-
 /*
  * Turn the options held here into a string list for
  * use in the rclone command.
@@ -160,5 +144,3 @@ QStringList JobOptions::getOptions() const {
   return list;
 }
 
-SerializationException::SerializationException(QString msg)
-    : QException(), Message(msg) {}
