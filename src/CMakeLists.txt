@@ -27,7 +27,8 @@ set(SOURCES
   rclone_updater.cpp rclone_updater.h
   theme.cpp theme.h
   utils.cpp utils.h
-  job_options.cpp job_options.h
+  job_options.cpp job_options_data.cpp job_options.h
+  task_job_codec.cpp task_job_codec.h
   list_of_job_options.cpp list_of_job_options.h
   task_storage.cpp task_storage.h
   task_list_transaction.h
@@ -137,6 +138,16 @@ if(RB_BUILD_TESTS)
     set_target_properties(test_task_restore PROPERTIES
                           RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME task_restore COMMAND test_task_restore)
+
+    add_executable(test_task_job_codec ../tests/test_task_job_codec.cpp
+                   task_job_codec.cpp task_job_codec.h
+                   job_options_data.cpp job_options.h task_restore.h)
+    target_include_directories(test_task_job_codec PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_task_job_codec PRIVATE
+                          Qt::Core Qt::Gui Qt::Widgets Qt::Test)
+    set_target_properties(test_task_job_codec PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME task_job_codec COMMAND test_task_job_codec)
 
     add_executable(test_task_protection ../tests/test_task_protection.cpp
                    task_protection.cpp task_protection.h)
