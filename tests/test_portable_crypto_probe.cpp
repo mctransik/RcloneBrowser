@@ -4,6 +4,7 @@
 #include <QByteArray>
 
 #include <array>
+#include <utility>
 #include <sodium.h>
 
 namespace {
