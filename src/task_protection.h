@@ -8,7 +8,13 @@
 // designed and tested before any existing user file is rewritten.
 namespace TaskProtection {
 
-enum class Format { LegacyPlaintext, WindowsDpapiV1, UnsupportedProtected };
+enum class Format {
+  LegacyPlaintext,
+  WindowsDpapiV1,
+  // Reserved for future password-portable encryption. No v2 codec exists yet.
+  PortablePasswordV2Reserved,
+  UnsupportedProtected
+};
 
 // Versioned fixed header identifies protected data without guessing based on
 // QDataStream content. Unknown future protected versions must fail closed.
