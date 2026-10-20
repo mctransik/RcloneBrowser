@@ -1,14 +1,11 @@
 #include "list_of_job_options.h"
 #include "task_storage.h"
+#include "task_restore.h"
 #include "task_protection.h"
 #include "task_list_transaction.h"
-#include <QBuffer>
 #include <QDataStream>
 #include <QMessageBox>
 #include <QTimer>
-#include <QtAlgorithms>
-#include <memory>
-#include <utility>
 #include <qdir.h>
 #include <qlogging.h>
 #include <qstandardpaths.h>
@@ -125,39 +122,12 @@ bool ListOfJobOptions::RestoreFromUserData(ListOfJobOptions &dataIn) {
     return false;
   }
 
-  QBuffer input(&stored);
-  if (!input.open(QIODevice::ReadOnly)) {
+  if (!TaskRestore::decodeLegacyTransactional(
+          stored, dataIn.tasks,
+          [](QDataStream &stream, JobOptions &record) { stream >> record; })) {
     dataIn.recoveryReadOnly = true;
     return false;
   }
-  QDataStream stream(&input);
-  stream.setVersion(QDataStream::Qt_5_2);
-  QList<JobOptions *> staged;
-  bool valid = true;
-  while (!stream.atEnd()) {
-    auto candidate = std::make_unique<JobOptions>();
-    try {
-      stream >> *candidate;
-    } catch (const SerializationException &) {
-      valid = false;
-      break;
-    }
-    if (stream.status() != QDataStream::Ok) {
-      valid = false;
-      break;
-    }
-    staged.append(candidate.release());
-  }
-  if (stream.status() != QDataStream::Ok)
-    valid = false;
-  if (!valid) {
-    // Do not publish partial results; keep the existing file and lock writes.
-    qDeleteAll(staged);
-    dataIn.recoveryReadOnly = true;
-    return false;
-  }
-  qDeleteAll(dataIn.tasks);
-  dataIn.tasks = std::move(staged);
   return true;
 }
 
