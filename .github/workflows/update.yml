@@ -115,11 +115,19 @@ jobs:
           $tampered = Join-Path $env:RUNNER_TEMP "libsodium-signed-archive-tampered.zip"
           Copy-Item -LiteralPath $filename -Destination $tampered
           [System.IO.File]::AppendAllText($tampered, "simulated-tamper")
-          $null = & $gpg --homedir $gpgHome --batch --no-tty --verify $sigName $tampered 2>&1
-          if ($LASTEXITCODE -eq 0) {
-            throw "Tampered libsodium archive unexpectedly passed GPG signature verification."
+          $tamperStatus = @(& $gpg --homedir $gpgHome --batch --no-tty --status-fd 1 --verify $sigName $tampered 2>&1)
+          $tamperExitCode = $LASTEXITCODE
+          $badSignature = @($tamperStatus | Where-Object { $_ -match "^\[GNUPG:\] BADSIG [0-9A-Fa-f]{8,40} " })
+          # A generic GPG failure (missing key, broken binary, etc.) is not
+          # evidence that altered signed bytes were cryptographically rejected.
+          if ($tamperExitCode -ne 1 -or $badSignature.Count -ne 1) {
+            throw "Tamper test did not produce the expected GPG bad-signature verdict."
           }
-          Write-Host "Original detached signature verified; tampered copy correctly rejected."
+          # PowerShell retains the exit code of the *expected* failing
+          # negative-test process and can fail this entire CI step despite
+          # successful checks. Clear it only AFTER asserting BADSIG above.
+          $global:LASTEXITCODE = 0
+          Write-Host "Original signature verified; tampered copy rejected with BADSIG."
 
           $dest = Join-Path $env:RUNNER_TEMP "rb-libsodium-probe"
           Expand-Archive -LiteralPath $filename -DestinationPath $dest
