@@ -280,10 +280,11 @@ private slots:
     QVERIFY(seal(payload, pw, &a, &x));
     QVERIFY(seal(payload, pw, &b, &x));
     QCOMPARE(a, b);
-    // This fingerprint is independently pinned in a follow-up after
-    // Windows and Linux first agree; never reuse fixed nonces in production.
-    qInfo().noquote() << "v2 synthetic fixture sha256:"
-                      << QCryptographicHash::hash(a, QCryptographicHash::Sha256).toHex();
+    // Independently generated using libsodium 1.0.18 and Python ctypes.
+    // This fixed-input vector is synthetic and must never be used for real
+    // encryption; both Windows and Linux must produce these exact bytes.
+    QCOMPARE(QCryptographicHash::hash(a, QCryptographicHash::Sha256).toHex(),
+             QByteArray("6a166dd34aeb98928517b293975dd70be4635eb7271f75c6644acd2769159674"));
   }
 
   void emptyPayloadRoundTrips() {
