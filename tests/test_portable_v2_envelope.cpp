@@ -18,6 +18,10 @@ constexpr int kTag = crypto_aead_xchacha20poly1305_ietf_ABYTES;
 constexpr int kMaxPlain = 1024 * 1024; // fixture-only; NOT product policy
 constexpr quint32 kOps = static_cast<quint32>(crypto_pwhash_OPSLIMIT_INTERACTIVE);
 constexpr quint32 kMemKiB = static_cast<quint32>(crypto_pwhash_MEMLIMIT_INTERACTIVE / 1024);
+// These bytes are a versioned *test-fixture* profile, never a production
+// password policy. Upgrading libsodium must not silently change this format.
+static_assert(kOps == 2u && kMemKiB == 65536u,
+              "Draft v2 test vector KDF parameters must remain stable");
 constexpr int kTotalMax = kHeader + kWrapped + kMaxPlain + kTag;
 constexpr char kMagic[] = "RBTSENC2";
 constexpr char kWrapDomain[] = "RcloneBrowser/RBTSENC2/wrap/1";
@@ -31,6 +35,10 @@ using Key = std::array<unsigned char, 32>;
 using Salt = std::array<unsigned char, 16>;
 using FileId = std::array<unsigned char, 16>;
 using Nonce = std::array<unsigned char, 24>;
+
+// Research-only instrumentation: an adversarial header MUST be rejected
+// before the 64-MiB Argon2id call (or a future more costly KDF).
+unsigned int kdfCalls = 0;
 
 struct Inputs { // Allows only test fixtures to choose deterministic randomness.
   FileId fileId{};
@@ -72,6 +80,7 @@ QByteArray associatedData(const char *domain, const QByteArray &header,
 bool derive(const QByteArray &password, const Salt &salt, Key *key) {
   if (!key || password.isEmpty() || password.size() > 4096)
     return false;
+  ++kdfCalls;
   return crypto_pwhash(
       key->data(), key->size(), password.constData(),
       static_cast<unsigned long long>(password.size()), salt.data(),
@@ -179,10 +188,17 @@ bool open(const QByteArray &wire, const QByteArray &password, QByteArray *plain)
   if (sodium_init() < 0 || password.isEmpty() || password.size() > 4096 ||
       wire.size() < kHeader + kWrapped + kTag || wire.size() > kTotalMax)
     return false;
+  // Fail-closed authorization precedes *any* Argon2id operation. Header
+  // parameters are attacker-controlled until the AEAD tags are verified.
+  // The experimental revision 1 intentionally authorizes one fixed
+  // research profile; it must NEVER auto-accept a weaker/stronger setting
+  // just because the value is valid according to the libsodium API.
+  const quint32 fileOps = readU32(wire, 12);
+  const quint32 fileMemKiB = readU32(wire, 16);
   if (wire.left(8) != QByteArray(kMagic, 8) ||
       quint8(wire.at(8)) != 1 || quint8(wire.at(9)) != 1 ||
       quint8(wire.at(10)) != 1 || quint8(wire.at(11)) != 1 ||
-      readU32(wire, 12) != kOps || readU32(wire, 16) != kMemKiB ||
+      fileOps != 2u || fileMemKiB != 65536u ||
       readU16(wire, 100) != kWrapped)
     return false;
   const quint32 cipherSize = readU32(wire, 102);
@@ -329,6 +345,51 @@ private slots:
     }
     rejectWithClearedOutput(wire + "extra", pw);
   }
+  void hostileHeadersNeverInvokeArgon2id() {
+    QByteArray wire;
+    QVERIFY(seal(payload, pw, &wire));
+    // Every case is rejected during structural/KDF policy validation
+    // without even starting a potentially costly password hash.
+    const unsigned int callsBefore = kdfCalls;
+    for (int offset : {0, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+                       18, 19, 100, 101, 102, 103, 104, 105}) {
+      QByteArray damaged = wire;
+      damaged[offset] = char(quint8(damaged.at(offset)) ^ 1u);
+      rejectWithClearedOutput(damaged, pw);
+      QCOMPARE(kdfCalls, callsBefore);
+    }
+    // Plausible-but-UNAPPROVED profiles must also be refused rather
+    // than silently downgrading or consuming attacker-controlled RAM.
+    for (const auto &candidate : {
+           std::pair<quint32, quint32>{1u, 65536u},
+           {3u, 65536u}, {2u, 32768u}, {2u, 262144u},
+           {0xffffffffu, 0xffffffffu}, {0u, 0u}}) {
+      QByteArray altered = wire;
+      for (int i = 0; i < 4; ++i) {
+        altered[12 + i] = char((candidate.first >> (24 - 8 * i)) & 0xff);
+        altered[16 + i] = char((candidate.second >> (24 - 8 * i)) & 0xff);
+      }
+      rejectWithClearedOutput(altered, pw);
+      QCOMPARE(kdfCalls, callsBefore);
+    }
+    rejectWithClearedOutput(wire.left(kHeader - 1), pw);
+    QCOMPARE(kdfCalls, callsBefore);
+    rejectWithClearedOutput(wire + "surplus", pw);
+    QCOMPARE(kdfCalls, callsBefore);
+    rejectWithClearedOutput(QByteArray(kTotalMax + 1, char(0)), pw);
+    QCOMPARE(kdfCalls, callsBefore);
+  }
+
+  void authorizedHeaderDerivesOnlyAfterValidation() {
+    QByteArray wire;
+    QVERIFY(seal(payload, pw, &wire));
+    const unsigned int before = kdfCalls;
+    QByteArray decoded;
+    QVERIFY(open(wire, pw, &decoded));
+    QCOMPARE(decoded, payload);
+    QCOMPARE(kdfCalls, before + 1);
+  }
+
   void oversizedCiphertextAndKdfParametersFailEarly() {
     QByteArray wire;
     QVERIFY(seal(payload, pw, &wire));
