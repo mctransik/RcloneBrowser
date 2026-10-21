@@ -95,18 +95,31 @@ jobs:
 
           $keyInventory = & $gpg --homedir $gpgHome --batch --with-colons --fingerprint --list-keys
           if ($LASTEXITCODE -ne 0) { throw "Cannot inspect libsodium verification key." }
-          # The isolated keyring must have exactly one public primary key.
+          # This disposable keyring must contain exactly one primary key.
           $primaryKeys = @($keyInventory | Where-Object { $_ -match "^pub:" })
           if ($primaryKeys.Count -ne 1) { throw "Unexpected libsodium verification key inventory." }
           $keyFprs = @($keyInventory | Where-Object { $_ -match "^fpr:" } |
             ForEach-Object { ($_ -split ":")[9] })
-          if ($keyFprs.Count -lt 1 -or $keyFprs[0] -notmatch '^[0-9A-F]{40,64}
+          if ($keyFprs.Count -lt 1 -or $keyFprs[0] -notmatch "^[0-9a-fA-F]{40,64}") {
+            throw "Unexpected libsodium signing-key fingerprint."
+          }
+          Write-Host "Upstream primary signing-key fingerprint: $($keyFprs[0])"
           $signerStatus = @(& $gpg --homedir $gpgHome --batch --no-tty --status-fd 1 --verify $sigName $filename 2>&1)
-          if ($LASTEXITCODE -ne 0 -or
-              -not ($signerStatus | Where-Object { $_ -match "^\[GNUPG:\] VALIDSIG [0-9A-F]{40,64} " })) {
+          $validSig = @($signerStatus | Where-Object { $_ -match "^\[GNUPG:\] VALIDSIG [0-9A-Fa-f]{40,64} " })
+          if ($LASTEXITCODE -ne 0 -or $validSig.Count -ne 1) {
             throw "libsodium detached GPG signature verification failed."
           }
-          Write-Host "Pinned libsodium archive and detached GPG signature verified."
+
+          # Regression gate: changing signed bytes must invalidate the
+          # upstream signature. Never accept a failed signature as a warning.
+          $tampered = Join-Path $env:RUNNER_TEMP "libsodium-signed-archive-tampered.zip"
+          Copy-Item -LiteralPath $filename -Destination $tampered
+          [System.IO.File]::AppendAllText($tampered, "simulated-tamper")
+          $null = & $gpg --homedir $gpgHome --batch --no-tty --verify $sigName $tampered 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            throw "Tampered libsodium archive unexpectedly passed GPG signature verification."
+          }
+          Write-Host "Original detached signature verified; tampered copy correctly rejected."
 
           $dest = Join-Path $env:RUNNER_TEMP "rb-libsodium-probe"
           Expand-Archive -LiteralPath $filename -DestinationPath $dest
