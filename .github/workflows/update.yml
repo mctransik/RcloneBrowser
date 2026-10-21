@@ -82,8 +82,14 @@ jobs:
           $gpg = $gpgCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
           if (-not $gpg) { throw "GnuPG missing: refusing unverified libsodium." }
           $keyFile = "security/libsodium-release-signing-key.asc"
-          $gpgHome = Join-Path $env:RUNNER_TEMP "rb-libsodium-gpg-home"
-          New-Item -ItemType Directory -Force -Path $gpgHome | Out-Null
+          # Git-for-Windows GnuPG is MSYS-based: a native D:\\... path
+          # passed as --homedir is misinterpreted as a *relative* path.
+          # A fresh POSIX-style relative home avoids that translation bug.
+          $gpgHome = "./.libsodium-gpg-verify"
+          if (Test-Path -LiteralPath $gpgHome) {
+            throw "Unexpected pre-existing GnuPG home. Refusing unsafe keyring."
+          }
+          New-Item -ItemType Directory -Path $gpgHome | Out-Null
           & $gpg --homedir $gpgHome --batch --no-tty --import $keyFile
           if ($LASTEXITCODE -ne 0) { throw "Unable to import pinned libsodium verification key." }
 
