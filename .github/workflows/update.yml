@@ -64,6 +64,41 @@ jobs:
           if ($actual -ne $expected) {
             throw "Pinned libsodium test archive hash mismatch. Refusing to unpack."
           }
+          # Verify the separate upstream GPG signature using ONLY our
+          # reviewed public key. Do not trust a runner's global keyring.
+          $sigName = "$filename.sig"
+          $expectedSig = "ec59666f62b853576105b5e151a21672c95a057aced84ef1e1de8fc850704eb4"
+          Invoke-WebRequest "https://download.libsodium.org/libsodium/releases/$sigName" -OutFile $sigName
+          $actualSig = (Get-FileHash -LiteralPath $sigName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSig -ne $expectedSig) {
+            throw "Pinned libsodium release signature digest mismatch."
+          }
+
+          $gpgCandidates = @(
+            (Get-Command gpg.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source),
+            "$env:ProgramFiles\\Git\\usr\\bin\\gpg.exe",
+            "C:\\msys64\\usr\\bin\\gpg.exe"
+          )
+          $gpg = $gpgCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $gpg) { throw "GnuPG missing: refusing unverified libsodium." }
+          $keyFile = "security/libsodium-release-signing-key.asc"
+          $gpgHome = Join-Path $env:RUNNER_TEMP "rb-libsodium-gpg-home"
+          New-Item -ItemType Directory -Force -Path $gpgHome | Out-Null
+          & $gpg --homedir $gpgHome --batch --no-tty --import $keyFile
+          if ($LASTEXITCODE -ne 0) { throw "Unable to import pinned libsodium verification key." }
+
+          $keyInventory = & $gpg --homedir $gpgHome --batch --with-colons --fingerprint --list-keys
+          if ($LASTEXITCODE -ne 0) { throw "Cannot inspect libsodium verification key." }
+          # The isolated keyring must have exactly one public primary key.
+          $primaryKeys = @($keyInventory | Where-Object { $_ -match "^pub:" })
+          if ($primaryKeys.Count -ne 1) { throw "Unexpected libsodium verification key inventory." }
+          $signerStatus = @(& $gpg --homedir $gpgHome --batch --no-tty --status-fd 1 --verify $sigName $filename 2>&1)
+          if ($LASTEXITCODE -ne 0 -or
+              -not ($signerStatus | Where-Object { $_ -match "^\\[GNUPG:\\] VALIDSIG [0-9A-F]{40,64} " })) {
+            throw "libsodium detached GPG signature verification failed."
+          }
+          Write-Host "Pinned libsodium archive and detached GPG signature verified."
+
           $dest = Join-Path $env:RUNNER_TEMP "rb-libsodium-probe"
           Expand-Archive -LiteralPath $filename -DestinationPath $dest
           $root = Join-Path $dest "libsodium"
@@ -77,7 +112,6 @@ jobs:
           }
           "RB_SODIUM_PROBE_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "Verified the pinned point-release archive SHA-256; test-only dependency prepared."
-          # Detached signature verification still required for production integration.
 
       - name: Configure, build and test
         shell: cmd
