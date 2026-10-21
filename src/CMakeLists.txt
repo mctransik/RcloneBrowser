@@ -219,6 +219,22 @@ if(RB_BUILD_TESTS)
           VERBATIM)
       endif()
       add_test(NAME portable_v2_envelope COMMAND test_portable_v2_envelope)
+
+      # Compile-check a developer-only bounded Argon2id performance probe.
+      # No CTest registration: CI must NEVER benchmark ephemeral runners and
+      # interpret their results as an end-user hardware security policy.
+      # No install/package rule references this executable.
+      add_executable(portable_kdf_benchmark
+                     ../tests/benchmark_portable_kdf.cpp)
+      target_link_libraries(portable_kdf_benchmark PRIVATE ${SODIUM_PROBE_TARGET})
+      set_target_properties(portable_kdf_benchmark PROPERTIES
+                            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+      if(WIN32)
+        add_custom_command(TARGET portable_kdf_benchmark POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${SODIUM_PROBE_DLL}" "$<TARGET_FILE_DIR:portable_kdf_benchmark>"
+          VERBATIM)
+      endif()
     endif()
 
     add_executable(test_task_protection ../tests/test_task_protection.cpp
