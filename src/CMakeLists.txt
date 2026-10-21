@@ -203,6 +203,22 @@ if(RB_BUILD_TESTS)
           VERBATIM)
       endif()
       add_test(NAME portable_crypto_probe COMMAND test_portable_crypto_probe)
+
+      # Research-only RBTSENC2 wire-format fixture. Intentionally NOT compiled
+      # into RcloneBrowser, and not copied to release artifacts.
+      add_executable(test_portable_v2_envelope
+                     ../tests/test_portable_v2_envelope.cpp)
+      target_link_libraries(test_portable_v2_envelope PRIVATE
+                            Qt::Core Qt::Test ${SODIUM_PROBE_TARGET})
+      set_target_properties(test_portable_v2_envelope PROPERTIES
+                            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+      if(WIN32)
+        add_custom_command(TARGET test_portable_v2_envelope POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${SODIUM_PROBE_DLL}" "$<TARGET_FILE_DIR:test_portable_v2_envelope>"
+          VERBATIM)
+      endif()
+      add_test(NAME portable_v2_envelope COMMAND test_portable_v2_envelope)
     endif()
 
     add_executable(test_task_protection ../tests/test_task_protection.cpp
