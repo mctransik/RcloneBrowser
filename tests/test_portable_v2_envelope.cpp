@@ -4,6 +4,11 @@
 #include <QtTest>
 #include <QByteArray>
 #include <QCryptographicHash>
+#include <QCoreApplication>
+#include <QFile>
+#include <QSaveFile>
+#include <QTemporaryDir>
+#include <QString>
 
 #include <array>
 #include <cstdint>
@@ -125,7 +130,9 @@ QByteArray makeHeader(const Inputs &inputs, int cipherSize) {
 // Creates an in-memory synthetic envelope. No filesystem writes.
 bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
           const Inputs *fixture = nullptr) {
-  if (!out)
+  // The API must not destroy input when the caller accidentally aliases
+  // its output buffer with the plaintext buffer.
+  if (!out || out == &plain)
     return false;
   out->clear();
   if (sodium_init() < 0 || plain.size() > kMaxPlain ||
@@ -182,7 +189,9 @@ bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
 // Explicit parser checks all attacker-supplied lengths / KDF costs BEFORE
 // any key derivation, allocations proportional to the declared length, or AEAD.
 bool open(const QByteArray &wire, const QByteArray &password, QByteArray *plain) {
-  if (!plain)
+  // Never wipe the stored ciphertext if the caller passes its address as
+  // the output parameter. Such a programming error must be fail-closed.
+  if (!plain || plain == &wire)
     return false;
   plain->clear();
   if (sodium_init() < 0 || password.isEmpty() || password.size() > 4096 ||
@@ -301,6 +310,28 @@ private slots:
     // encryption; both Windows and Linux must produce these exact bytes.
     QCOMPARE(QCryptographicHash::hash(a, QCryptographicHash::Sha256).toHex(),
              QByteArray("6a166dd34aeb98928517b293975dd70be4635eb7271f75c6644acd2769159674"));
+  }
+
+  void independentSerializedFixtureDecryptsOnThisPlatform() {
+    // Committed bytes were constructed with a separate ctypes/libsodium
+    // implementation, NOT by calling this test's seal() function.
+    const QString fixturePath = QCoreApplication::applicationDirPath() +
+        QStringLiteral("/rbtsenc2-synthetic-v1.hex");
+    QFile fixture(fixturePath);
+    QVERIFY2(fixture.open(QIODevice::ReadOnly),
+             "Required independent synthetic crypto vector is missing.");
+    const QByteArray hex = fixture.readAll().trimmed();
+    QCOMPARE(hex.size(), 404);
+    const QByteArray savedBytes = QByteArray::fromHex(hex);
+    QCOMPARE(savedBytes.size(), 202);
+    QCOMPARE(savedBytes.toHex(), hex); // reject malformed/noncanonical hex
+    QCOMPARE(QCryptographicHash::hash(savedBytes,
+             QCryptographicHash::Sha256).toHex(),
+             QByteArray("6a166dd34aeb98928517b293975dd70be4635eb7271f75c6644acd2769159674"));
+    QByteArray restored;
+    QVERIFY(open(savedBytes, pw, &restored));
+    QCOMPARE(restored, payload);
+    rejectWithClearedOutput(savedBytes, QByteArray("wrong synthetic password"));
   }
 
   void emptyPayloadRoundTrips() {
@@ -427,6 +458,168 @@ private slots:
     QVERIFY(open(b, pw, &restored));
     QCOMPARE(restored, payload);
   }
+  void aliasedInputOutputNeverDestroysProtectedData() {
+    QByteArray encrypted;
+    QVERIFY(seal(payload, pw, &encrypted));
+    const QByteArray snapshot = encrypted;
+
+    // An accidental in-place read or write must return false and keep the
+    // source intact, even if the main password is wrong.
+    QVERIFY(!open(encrypted, pw, &encrypted));
+    QCOMPARE(encrypted, snapshot);
+    QVERIFY(!open(encrypted, QByteArray("wrong password"), &encrypted));
+    QCOMPARE(encrypted, snapshot);
+
+    QByteArray syntheticPlain(payload);
+    QVERIFY(!seal(syntheticPlain, pw, &syntheticPlain));
+    QCOMPARE(syntheticPlain, payload);
+
+    QByteArray decoded;
+    QVERIFY(open(encrypted, pw, &decoded));
+    QCOMPARE(decoded, payload);
+  }
+
+  void corruptedEncryptedDiskFixtureRemainsUnchangedOnFailure() {
+    QTemporaryDir sandbox;
+    QVERIFY(sandbox.isValid());
+    const QString path = sandbox.filePath("synthetic-corrupted-protected-file");
+
+    QByteArray encrypted;
+    QVERIFY(seal(payload, pw, &encrypted));
+    // Change an authenticated payload byte, then simulate reading it from
+    // disk. No real task file and no production storage code is accessed.
+    encrypted[encrypted.size() - 1] =
+        char(quint8(encrypted.at(encrypted.size() - 1)) ^ 1u);
+    {
+      QSaveFile writer(path);
+      writer.setDirectWriteFallback(false);
+      QVERIFY(writer.open(QIODevice::WriteOnly));
+      QCOMPARE(writer.write(encrypted), qint64(encrypted.size()));
+      QVERIFY(writer.commit());
+    }
+    {
+      QFile reader(path);
+      QVERIFY(reader.open(QIODevice::ReadOnly));
+      const QByteArray stored = reader.read(kTotalMax + 1);
+      QCOMPARE(reader.error(), QFileDevice::NoError);
+      QVERIFY(reader.atEnd());
+      QCOMPARE(stored, encrypted);
+
+      QByteArray decoded("stale plaintext");
+      QVERIFY(!open(stored, pw, &decoded));
+      QVERIFY(decoded.isEmpty());
+    }
+    QFile unchanged(path);
+    QVERIFY(unchanged.open(QIODevice::ReadOnly));
+    QCOMPARE(unchanged.readAll(), encrypted);
+  }
+
+  void encryptedSyntheticFileSurvivesPathMoveAndReload() {
+    // This is a disposable fixture in a private temporary directory.
+    // No real tasks.bin, user data, or application storage is involved.
+    QTemporaryDir originalSandbox;
+    QTemporaryDir backupSandbox;
+    QVERIFY(originalSandbox.isValid());
+    QVERIFY(backupSandbox.isValid());
+    const QString initialPath =
+        originalSandbox.filePath("synthetic-protected-fixture");
+    const QString relocatedPath =
+        backupSandbox.filePath("restored-protected-fixture");
+
+    QByteArray encrypted;
+    QVERIFY(seal(payload, pw, &encrypted));
+    QVERIFY(!encrypted.contains(payload));
+    {
+      QSaveFile writer(initialPath);
+      writer.setDirectWriteFallback(false);
+      QVERIFY(writer.open(QIODevice::WriteOnly));
+      QCOMPARE(writer.write(encrypted), qint64(encrypted.size()));
+      QVERIFY(writer.commit());
+    }
+    // A separate destination directory simulates a password-based restore
+    // from a copied backup. It does not simulate different physical hosts.
+    QVERIFY(QFile::copy(initialPath, relocatedPath));
+    QVERIFY(QFile::remove(initialPath));
+    QVERIFY(!QFile::exists(initialPath));
+    QByteArray reloaded;
+    {
+      QFile reader(relocatedPath);
+      QVERIFY(reader.open(QIODevice::ReadOnly));
+      // A bounded read is essential for hostile files; this fixture uses
+      // a 1-MiB cap rather than the as-yet undecided production limit.
+      reloaded = reader.read(kTotalMax + 1);
+      QVERIFY(reader.atEnd());
+      QCOMPARE(reader.error(), QFileDevice::NoError);
+    }
+    QCOMPARE(reloaded, encrypted);
+
+    // A new read from disk, independent of the original encrypted buffer,
+    // must recover with the password, without Windows DPAPI or path binding.
+    QByteArray recovered("old staged contents");
+    QVERIFY(open(reloaded, pw, &recovered));
+    QCOMPARE(recovered, payload);
+    rejectWithClearedOutput(reloaded, QByteArray("synthetic-wrong-password"));
+
+    // Failure to unlock must never rewrite or discard the encrypted file.
+    QFile unchanged(relocatedPath);
+    QVERIFY(unchanged.open(QIODevice::ReadOnly));
+    QCOMPARE(unchanged.readAll(), encrypted);
+  }
+
+  void cancelledSyntheticRewritePreservesProtectedFile() {
+    QTemporaryDir sandbox;
+    QVERIFY(sandbox.isValid());
+    const QString path = sandbox.filePath("never-a-real-tasks-file");
+    QByteArray original;
+    QVERIFY(seal(payload, pw, &original));
+    {
+      QSaveFile writer(path);
+      writer.setDirectWriteFallback(false);
+      QVERIFY(writer.open(QIODevice::WriteOnly));
+      QCOMPARE(writer.write(original), qint64(original.size()));
+      QVERIFY(writer.commit());
+    }
+    {
+      QSaveFile attemptedOverwrite(path);
+      attemptedOverwrite.setDirectWriteFallback(false);
+      QVERIFY(attemptedOverwrite.open(QIODevice::WriteOnly));
+      const QByteArray incomplete("incomplete-synthetic-contents");
+      QCOMPARE(attemptedOverwrite.write(incomplete),
+               qint64(incomplete.size()));
+      attemptedOverwrite.cancelWriting();
+    }
+    QFile existing(path);
+    QVERIFY(existing.open(QIODevice::ReadOnly));
+    const QByteArray retained = existing.readAll();
+    QCOMPARE(retained, original);
+    QByteArray recovered;
+    QVERIFY(open(retained, pw, &recovered));
+    QCOMPARE(recovered, payload);
+  }
+
+  void unicodePasswordBytesExposeUnresolvedNormalizationPolicy() {
+    // NFC composed and decomposed spellings look the same but have
+    // different UTF-8 encodings. The research codec takes raw bytes,
+    // without any GUI or Unicode normalization contract yet.
+    const QByteArray composed = QByteArray::fromHex("436166c3a9");
+    const QByteArray decomposed = QByteArray::fromHex("43616665cc81");
+    QVERIFY(composed != decomposed);
+    const QString visuallySameA = QString::fromUtf8(composed);
+    const QString visuallySameB = QString::fromUtf8(decomposed);
+    QCOMPARE(visuallySameA.normalized(QString::NormalizationForm_C),
+             visuallySameB.normalized(QString::NormalizationForm_C));
+    QByteArray encrypted;
+    QVERIFY(seal(payload, composed, &encrypted));
+    QByteArray recovered;
+    QVERIFY(open(encrypted, composed, &recovered));
+    QCOMPARE(recovered, payload);
+    rejectWithClearedOutput(encrypted, decomposed);
+
+    // This does NOT approve raw-byte passwords for the GUI. It proves
+    // normalization must be a conscious, versioned product decision
+    // before real credentials and backups are ever encrypted.
+  }
+
   void unsupportedMagicAndExtraSlotsFailClosed() {
     QByteArray wire;
     QVERIFY(seal(payload, pw, &wire));
