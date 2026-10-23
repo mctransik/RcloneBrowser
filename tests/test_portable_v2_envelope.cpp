@@ -4,6 +4,7 @@
 #include <QtTest>
 #include <QByteArray>
 #include <QCryptographicHash>
+#include <QCoreApplication>
 #include <QFile>
 #include <QSaveFile>
 #include <QTemporaryDir>
@@ -309,6 +310,28 @@ private slots:
     // encryption; both Windows and Linux must produce these exact bytes.
     QCOMPARE(QCryptographicHash::hash(a, QCryptographicHash::Sha256).toHex(),
              QByteArray("6a166dd34aeb98928517b293975dd70be4635eb7271f75c6644acd2769159674"));
+  }
+
+  void independentSerializedFixtureDecryptsOnThisPlatform() {
+    // Committed bytes were constructed with a separate ctypes/libsodium
+    // implementation, NOT by calling this test's seal() function.
+    const QString fixturePath = QCoreApplication::applicationDirPath() +
+        QStringLiteral("/rbtsenc2-synthetic-v1.hex");
+    QFile fixture(fixturePath);
+    QVERIFY2(fixture.open(QIODevice::ReadOnly),
+             "Required independent synthetic crypto vector is missing.");
+    const QByteArray hex = fixture.readAll().trimmed();
+    QCOMPARE(hex.size(), 404);
+    const QByteArray savedBytes = QByteArray::fromHex(hex);
+    QCOMPARE(savedBytes.size(), 202);
+    QCOMPARE(savedBytes.toHex(), hex); // reject malformed/noncanonical hex
+    QCOMPARE(QCryptographicHash::hash(savedBytes,
+             QCryptographicHash::Sha256).toHex(),
+             QByteArray("6a166dd34aeb98928517b293975dd70be4635eb7271f75c6644acd2769159674"));
+    QByteArray restored;
+    QVERIFY(open(savedBytes, pw, &restored));
+    QCOMPARE(restored, payload);
+    rejectWithClearedOutput(savedBytes, QByteArray("wrong synthetic password"));
   }
 
   void emptyPayloadRoundTrips() {
