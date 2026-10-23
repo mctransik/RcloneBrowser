@@ -129,7 +129,9 @@ QByteArray makeHeader(const Inputs &inputs, int cipherSize) {
 // Creates an in-memory synthetic envelope. No filesystem writes.
 bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
           const Inputs *fixture = nullptr) {
-  if (!out)
+  // The API must not destroy input when the caller accidentally aliases
+  // its output buffer with the plaintext buffer.
+  if (!out || out == &plain)
     return false;
   out->clear();
   if (sodium_init() < 0 || plain.size() > kMaxPlain ||
@@ -186,7 +188,9 @@ bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
 // Explicit parser checks all attacker-supplied lengths / KDF costs BEFORE
 // any key derivation, allocations proportional to the declared length, or AEAD.
 bool open(const QByteArray &wire, const QByteArray &password, QByteArray *plain) {
-  if (!plain)
+  // Never wipe the stored ciphertext if the caller passes its address as
+  // the output parameter. Such a programming error must be fail-closed.
+  if (!plain || plain == &wire)
     return false;
   plain->clear();
   if (sodium_init() < 0 || password.isEmpty() || password.size() > 4096 ||
@@ -431,6 +435,62 @@ private slots:
     QVERIFY(open(b, pw, &restored));
     QCOMPARE(restored, payload);
   }
+  void aliasedInputOutputNeverDestroysProtectedData() {
+    QByteArray encrypted;
+    QVERIFY(seal(payload, pw, &encrypted));
+    const QByteArray snapshot = encrypted;
+
+    // An accidental in-place read or write must return false and keep the
+    // source intact, even if the main password is wrong.
+    QVERIFY(!open(encrypted, pw, &encrypted));
+    QCOMPARE(encrypted, snapshot);
+    QVERIFY(!open(encrypted, QByteArray("wrong password"), &encrypted));
+    QCOMPARE(encrypted, snapshot);
+
+    QByteArray syntheticPlain(payload);
+    QVERIFY(!seal(syntheticPlain, pw, &syntheticPlain));
+    QCOMPARE(syntheticPlain, payload);
+
+    QByteArray decoded;
+    QVERIFY(open(encrypted, pw, &decoded));
+    QCOMPARE(decoded, payload);
+  }
+
+  void corruptedEncryptedDiskFixtureRemainsUnchangedOnFailure() {
+    QTemporaryDir sandbox;
+    QVERIFY(sandbox.isValid());
+    const QString path = sandbox.filePath("synthetic-corrupted-protected-file");
+
+    QByteArray encrypted;
+    QVERIFY(seal(payload, pw, &encrypted));
+    // Change an authenticated payload byte, then simulate reading it from
+    // disk. No real task file and no production storage code is accessed.
+    encrypted[encrypted.size() - 1] =
+        char(quint8(encrypted.at(encrypted.size() - 1)) ^ 1u);
+    {
+      QSaveFile writer(path);
+      writer.setDirectWriteFallback(false);
+      QVERIFY(writer.open(QIODevice::WriteOnly));
+      QCOMPARE(writer.write(encrypted), qint64(encrypted.size()));
+      QVERIFY(writer.commit());
+    }
+    {
+      QFile reader(path);
+      QVERIFY(reader.open(QIODevice::ReadOnly));
+      const QByteArray stored = reader.read(kTotalMax + 1);
+      QCOMPARE(reader.error(), QFileDevice::NoError);
+      QVERIFY(reader.atEnd());
+      QCOMPARE(stored, encrypted);
+
+      QByteArray decoded("stale plaintext");
+      QVERIFY(!open(stored, pw, &decoded));
+      QVERIFY(decoded.isEmpty());
+    }
+    QFile unchanged(path);
+    QVERIFY(unchanged.open(QIODevice::ReadOnly));
+    QCOMPARE(unchanged.readAll(), encrypted);
+  }
+
   void encryptedSyntheticFileSurvivesPathMoveAndReload() {
     // This is a disposable fixture in a private temporary directory.
     // No real tasks.bin, user data, or application storage is involved.
