@@ -631,6 +631,8 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRB_BUILD_PORTABLE_CRYPTO_PROBE=ON
           cmake --build build
+          # Only --help; NEVER invoke a memory-hard KDF benchmark on a CI runner.
+          ./build/tests/portable_kdf_benchmark --help
           ctest --test-dir build --output-on-failure
 
       - name: Build AppImage
