@@ -74,6 +74,17 @@ bool measure(const Profile &profile) {
 } // namespace
 
 int main(int argc, char **argv) {
+  // Safe startup smoke test for CI and Windows users: no Argon2 allocations,
+  // no derivations and no access to files or credential stores.
+  if (argc == 2 && std::string(argv[1]) == "--help") {
+    std::cout
+        << "RESEARCH ONLY - NOT PART OF RCLONEBROWSER RELEASES\n"
+        << "Usage: portable_kdf_benchmark --run-synthetic\n"
+        << "Synthetic Argon2id13 only: 3 iterations at 64 MiB/2 ops and"
+           " 256 MiB/3 ops.\n"
+        << "Never supply real passwords or task files.\n";
+    return 0;
+  }
   if (argc != 2 || std::string(argv[1]) != "--run-synthetic") {
     std::cerr
         << "Developer research only; requires --run-synthetic.\n"
