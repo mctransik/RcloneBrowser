@@ -212,6 +212,13 @@ if(RB_BUILD_TESTS)
                             Qt::Core Qt::Test ${SODIUM_PROBE_TARGET})
       set_target_properties(test_portable_v2_envelope PROPERTIES
                             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+      # This reviewed, synthetic encrypted byte fixture is independent of
+      # the in-test seal() implementation. Use the same file on both OSes;
+      # never package it with RcloneBrowser itself.
+      file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+      configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/rbtsenc2-synthetic-v1.hex"
+        "${CMAKE_BINARY_DIR}/tests/rbtsenc2-synthetic-v1.hex" COPYONLY)
       if(WIN32)
         add_custom_command(TARGET test_portable_v2_envelope POST_BUILD
           COMMAND ${CMAKE_COMMAND} -E copy_if_different
