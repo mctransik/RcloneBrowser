@@ -4,6 +4,10 @@
 #include <QtTest>
 #include <QByteArray>
 #include <QCryptographicHash>
+#include <QFile>
+#include <QSaveFile>
+#include <QTemporaryDir>
+#include <QString>
 
 #include <array>
 #include <cstdint>
@@ -427,6 +431,104 @@ private slots:
     QVERIFY(open(b, pw, &restored));
     QCOMPARE(restored, payload);
   }
+  void encryptedSyntheticFileSurvivesPathMoveAndReload() {
+    // This is a disposable fixture in a private temporary directory.
+    // No real tasks.bin, user data, or application storage is involved.
+    QTemporaryDir sandbox;
+    QVERIFY(sandbox.isValid());
+    const QString initialPath = sandbox.filePath("synthetic-protected-fixture");
+    const QString relocatedPath = sandbox.filePath("relocated-protected-fixture");
+
+    QByteArray encrypted;
+    QVERIFY(seal(payload, pw, &encrypted));
+    QVERIFY(!encrypted.contains(payload));
+    {
+      QSaveFile writer(initialPath);
+      writer.setDirectWriteFallback(false);
+      QVERIFY(writer.open(QIODevice::WriteOnly));
+      QCOMPARE(writer.write(encrypted), qint64(encrypted.size()));
+      QVERIFY(writer.commit());
+    }
+    QVERIFY(QFile::rename(initialPath, relocatedPath));
+    QByteArray reloaded;
+    {
+      QFile reader(relocatedPath);
+      QVERIFY(reader.open(QIODevice::ReadOnly));
+      // A bounded read is essential for hostile files; this fixture uses
+      // a 1-MiB cap rather than the as-yet undecided production limit.
+      reloaded = reader.read(kTotalMax + 1);
+      QVERIFY(reader.atEnd());
+      QCOMPARE(reader.error(), QFileDevice::NoError);
+    }
+    QCOMPARE(reloaded, encrypted);
+
+    // A new read from disk, independent of the original encrypted buffer,
+    // must recover with the password, without Windows DPAPI or path binding.
+    QByteArray recovered("old staged contents");
+    QVERIFY(open(reloaded, pw, &recovered));
+    QCOMPARE(recovered, payload);
+    rejectWithClearedOutput(reloaded, QByteArray("synthetic-wrong-password"));
+
+    // Failure to unlock must never rewrite or discard the encrypted file.
+    QFile unchanged(relocatedPath);
+    QVERIFY(unchanged.open(QIODevice::ReadOnly));
+    QCOMPARE(unchanged.readAll(), encrypted);
+  }
+
+  void cancelledSyntheticRewritePreservesProtectedFile() {
+    QTemporaryDir sandbox;
+    QVERIFY(sandbox.isValid());
+    const QString path = sandbox.filePath("never-a-real-tasks-file");
+    QByteArray original;
+    QVERIFY(seal(payload, pw, &original));
+    {
+      QSaveFile writer(path);
+      writer.setDirectWriteFallback(false);
+      QVERIFY(writer.open(QIODevice::WriteOnly));
+      QCOMPARE(writer.write(original), qint64(original.size()));
+      QVERIFY(writer.commit());
+    }
+    {
+      QSaveFile attemptedOverwrite(path);
+      attemptedOverwrite.setDirectWriteFallback(false);
+      QVERIFY(attemptedOverwrite.open(QIODevice::WriteOnly));
+      const QByteArray incomplete("incomplete-synthetic-contents");
+      QCOMPARE(attemptedOverwrite.write(incomplete),
+               qint64(incomplete.size()));
+      attemptedOverwrite.cancelWriting();
+    }
+    QFile existing(path);
+    QVERIFY(existing.open(QIODevice::ReadOnly));
+    const QByteArray retained = existing.readAll();
+    QCOMPARE(retained, original);
+    QByteArray recovered;
+    QVERIFY(open(retained, pw, &recovered));
+    QCOMPARE(recovered, payload);
+  }
+
+  void unicodePasswordBytesExposeUnresolvedNormalizationPolicy() {
+    // NFC composed and decomposed spellings look the same but have
+    // different UTF-8 encodings. The research codec takes raw bytes,
+    // without any GUI or Unicode normalization contract yet.
+    const QByteArray composed = QByteArray::fromHex("436166c3a9");
+    const QByteArray decomposed = QByteArray::fromHex("43616665cc81");
+    QVERIFY(composed != decomposed);
+    const QString visuallySameA = QString::fromUtf8(composed);
+    const QString visuallySameB = QString::fromUtf8(decomposed);
+    QCOMPARE(visuallySameA.normalized(QString::NormalizationForm_C),
+             visuallySameB.normalized(QString::NormalizationForm_C));
+    QByteArray encrypted;
+    QVERIFY(seal(payload, composed, &encrypted));
+    QByteArray recovered;
+    QVERIFY(open(encrypted, composed, &recovered));
+    QCOMPARE(recovered, payload);
+    rejectWithClearedOutput(encrypted, decomposed);
+
+    // This does NOT approve raw-byte passwords for the GUI. It proves
+    // normalization must be a conscious, versioned product decision
+    // before real credentials and backups are ever encrypted.
+  }
+
   void unsupportedMagicAndExtraSlotsFailClosed() {
     QByteArray wire;
     QVERIFY(seal(payload, pw, &wire));
