@@ -14,7 +14,8 @@ artifacts.
 1. **`encryptedSyntheticFileSurvivesPathMoveAndReload`** encrypts a
    made-up task string into a byte buffer, writes it atomically into an
    isolated `QTemporaryDir` using `QSaveFile` with direct-write fallback
-   disabled, renames the file, reads it back with an explicit byte cap, and
+   disabled, copies it into a **second isolated temporary directory**, removes the
+   original test copy, reads the restored copy with an explicit byte cap, and
    decrypts it successfully using only the invented main password. The
    test checks that wrong-password attempts return **no plaintext** and
    do **not** alter or erase the encrypted file on disk.
@@ -22,7 +23,15 @@ artifacts.
    valid temporary encrypted fixture, starts a second atomic write with
    incomplete *synthetic* data, cancels it, then checks that the original
    encrypted bytes still exist and can be decrypted.
-3. **`unicodePasswordBytesExposeUnresolvedNormalizationPolicy`** shows
+3. **`aliasedInputOutputNeverDestroysProtectedData`** refuses to
+   encrypt/decrypt in place when the input and output `QByteArray`
+   are the **same object**, avoiding accidental loss of the ciphertext or
+   plaintext due to caller aliasing.
+4. **`corruptedEncryptedDiskFixtureRemainsUnchangedOnFailure`** writes an
+   intentionally tampered synthetic ciphertext to disk, then requires
+   authentication failure to clear the proposed plaintext while leaving
+   the corrupted file's bytes available for recovery and investigation.
+5. **`unicodePasswordBytesExposeUnresolvedNormalizationPolicy`** shows
    that two visually equivalent Unicode strings (precomposed vs
    decomposed `é`) yield different raw UTF-8 password bytes. The
    current research codec **does not normalize passwords** and thus
