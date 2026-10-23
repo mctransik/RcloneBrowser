@@ -63,6 +63,34 @@ requested KDF RAM, more than three Argon2id operations, or allocation
 failures. Never auto-retry under a weaker profile. It requires an explicit
 `--run-synthetic` argument.
 
+### Separate Windows research artifact (manual workflow only)
+
+The stacked research branch
+`security/portable-kdf-local-benchmark-2026-10-23` adds a deliberately
+**separate** Windows-only developer artifact for voluntary local measurement.
+It is not embedded into RcloneBrowser's application/release ZIP.
+
+The diagnostic is packaged only when the `Update` workflow is **manually
+dispatched on this exact branch**, after the executable's `--help` startup
+check. It includes the test-only `libsodium.dll`, its upstream ISC license,
+the source commit, the user instructions, and a SHA-256 inventory. The
+existing Windows-package ClamAV job additionally checks the research
+inventory, scans this independent payload, and **only then** uploads
+`RESEARCH-ONLY-portable-kdf-windows`.
+
+Neither hosted CI nor any app startup runs `--run-synthetic`. It is strictly
+a manual choice of the person running the benchmark on their own PC. Hashes
+from inside the same downloaded artifact detect accidental changes but do
+**not** independently establish provenance; the uploaded executable has
+no Authenticode signature. Do not disable Windows security protections to
+run it. Consult:
+`docs/PORTABLE_KDF_LOCAL_MEASUREMENT_2026-10-23.md`.
+
+The resulting measurements must not be taken as approval of the wire
+format or a particular KDF. The research tool may require a supported
+Microsoft Visual C++ runtime on Windows; missing DLL errors are reasons
+to stop and review dependencies rather than download random DLLs.
+
 Measurements should be repeated on representative supported devices,
 including a lower-end Windows PC and Linux systems. Review memory pressure,
 process concurrency, GUI responsiveness, cold/warm variance and acceptable
