@@ -494,10 +494,14 @@ private slots:
   void encryptedSyntheticFileSurvivesPathMoveAndReload() {
     // This is a disposable fixture in a private temporary directory.
     // No real tasks.bin, user data, or application storage is involved.
-    QTemporaryDir sandbox;
-    QVERIFY(sandbox.isValid());
-    const QString initialPath = sandbox.filePath("synthetic-protected-fixture");
-    const QString relocatedPath = sandbox.filePath("relocated-protected-fixture");
+    QTemporaryDir originalSandbox;
+    QTemporaryDir backupSandbox;
+    QVERIFY(originalSandbox.isValid());
+    QVERIFY(backupSandbox.isValid());
+    const QString initialPath =
+        originalSandbox.filePath("synthetic-protected-fixture");
+    const QString relocatedPath =
+        backupSandbox.filePath("restored-protected-fixture");
 
     QByteArray encrypted;
     QVERIFY(seal(payload, pw, &encrypted));
@@ -509,7 +513,11 @@ private slots:
       QCOMPARE(writer.write(encrypted), qint64(encrypted.size()));
       QVERIFY(writer.commit());
     }
-    QVERIFY(QFile::rename(initialPath, relocatedPath));
+    // A separate destination directory simulates a password-based restore
+    // from a copied backup. It does not simulate different physical hosts.
+    QVERIFY(QFile::copy(initialPath, relocatedPath));
+    QVERIFY(QFile::remove(initialPath));
+    QVERIFY(!QFile::exists(initialPath));
     QByteArray reloaded;
     {
       QFile reader(relocatedPath);
