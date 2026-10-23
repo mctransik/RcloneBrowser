@@ -47,6 +47,28 @@ copy an encrypted file between two different operating systems. Do not
 claim actual inter-machine recovery or a completed migration based on
 these tests alone.
 
+## Independently committed cross-platform ciphertext
+
+The repository now includes a **public, synthetic** 202-byte encrypted
+envelope in `tests/fixtures/rbtsenc2-synthetic-v1.hex`, generated with
+an independent Python `ctypes` binding to system libsodium on Linux.
+The fixed nonces, test password, key, and salts are intentional **test
+material only** — never use these bytes or parameters to encrypt real data.
+
+The CMake test target copies these exact bytes alongside the research
+test binary. Each OS reads the **same committed ciphertext** and
+`independentSerializedFixtureDecryptsOnThisPlatform` verifies the
+complete SHA-256 digest, decodes it using only the invented password,
+and rejects an incorrect password. This complements the existing
+cross-platform `seal()` deterministic digest check. Together the
+checks can establish format consistency independently of whether an
+individual platform's encoder and decoder share the same bug.
+
+This remains a **simulated portability test**: GitHub CI uses identical
+repository input bytes on separate Windows/Linux runners, not a file
+copied between two real user machines. No account-based DPAPI is
+involved. The actual app does not load or write this format.
+
 ## Important limitations
 
 - `tasks.bin` is still in its existing unencrypted legacy form. This
