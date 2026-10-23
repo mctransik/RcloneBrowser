@@ -406,10 +406,11 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: UNSCANNED-windows-build-inputs
+          # The optional research tree is outside the app ZIP and remains
+          # UNSCANNED until the separate ClamAV job has inspected it.
           path: |
             dist/RcloneBrowser/
             dist/*.zip
-            # Optional manual-branch research-only executable, NEVER inside the app ZIP.
             dist/research-kdf-benchmark/
           if-no-files-found: error
 
