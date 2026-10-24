@@ -11,6 +11,7 @@
 #include <QString>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <utility>
@@ -44,6 +45,31 @@ using Nonce = std::array<unsigned char, 24>;
 // Research-only instrumentation: an adversarial header MUST be rejected
 // before the 64-MiB Argon2id call (or a future more costly KDF).
 unsigned int kdfCalls = 0;
+
+// These research-only counters demonstrate that the scope-exit guards run.
+// They cannot prove that all compiler/Qt/OS copies of private data disappear.
+unsigned int keyWipeGuardsRun = 0;
+
+// Wipe *existing* 32-byte key storage at scope exit on every return path.
+// Never copy/move a live guard: a copied pointer could otherwise outlive its
+// corresponding secret. This is NOT a production secret-memory abstraction.
+class ScopedKeyWipe final {
+public:
+  ScopedKeyWipe(unsigned char *ptr, std::size_t len) noexcept
+      : ptr_(ptr), len_(len) {}
+  ScopedKeyWipe(const ScopedKeyWipe &) = delete;
+  ScopedKeyWipe &operator=(const ScopedKeyWipe &) = delete;
+  ScopedKeyWipe(ScopedKeyWipe &&) = delete;
+  ScopedKeyWipe &operator=(ScopedKeyWipe &&) = delete;
+  ~ScopedKeyWipe() noexcept {
+    sodium_memzero(ptr_, len_);
+    ++keyWipeGuardsRun;
+  }
+
+private:
+  unsigned char *const ptr_;
+  const std::size_t len_;
+};
 
 struct Inputs { // Allows only test fixtures to choose deterministic randomness.
   FileId fileId{};
@@ -168,7 +194,7 @@ bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
           const Inputs *fixture = nullptr) {
   // The API must not destroy input when the caller accidentally aliases
   // its output buffer with the plaintext buffer.
-  if (!out || out == &plain)
+  if (!out || out == &plain || out == &password)
     return false;
   out->clear();
   if (sodium_init() < 0 || plain.size() > kMaxPlain ||
@@ -176,17 +202,14 @@ bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
     return false;
 
   Inputs x = fixture ? *fixture : randomInputs();
+  ScopedKeyWipe wipeDek(x.dek.data(), x.dek.size());
   Key kek{};
-  if (!derive(password, x.salt, &kek)) {
-    sodium_memzero(x.dek.data(), x.dek.size());
+  ScopedKeyWipe wipeKek(kek.data(), kek.size());
+  if (!derive(password, x.salt, &kek))
     return false;
-  }
   const QByteArray header = makeHeader(x, int(plain.size()) + kTag);
-  if (header.size() != kHeader) {
-    sodium_memzero(kek.data(), kek.size());
-    sodium_memzero(x.dek.data(), x.dek.size());
+  if (header.size() != kHeader)
     return false;
-  }
   QByteArray wrapped;
   wrapped.resize(kWrapped);
   unsigned long long written = 0;
@@ -197,11 +220,10 @@ bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
       reinterpret_cast<const unsigned char *>(wad.constData()),
       static_cast<unsigned long long>(wad.size()), nullptr,
       x.wrapNonce.data(), kek.data());
+  // Wipe immediately after last use; the RAII guard handles early returns.
   sodium_memzero(kek.data(), kek.size());
-  if (rc != 0 || written != static_cast<unsigned long long>(kWrapped)) {
-    sodium_memzero(x.dek.data(), x.dek.size());
+  if (rc != 0 || written != static_cast<unsigned long long>(kWrapped))
     return false;
-  }
   QByteArray ciphertext;
   ciphertext.resize(plain.size() + kTag);
   const QByteArray pad = associatedData(kDataDomain, header, wrapped);
@@ -227,7 +249,7 @@ bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
 bool open(const QByteArray &wire, const QByteArray &password, QByteArray *plain) {
   // Never wipe the stored ciphertext if the caller passes its address as
   // the output parameter. Such a programming error must be fail-closed.
-  if (!plain || plain == &wire)
+  if (!plain || plain == &wire || plain == &password)
     return false;
   plain->clear();
   if (sodium_init() < 0 || password.isEmpty() || password.size() > 4096 ||
@@ -264,6 +286,8 @@ bool open(const QByteArray &wire, const QByteArray &password, QByteArray *plain)
   const QByteArray wrapped = wire.mid(kHeader, kWrapped);
 
   Key kek{}, dek{};
+  ScopedKeyWipe wipeKek(kek.data(), kek.size());
+  ScopedKeyWipe wipeDek(dek.data(), dek.size());
   if (!derive(password, salt, &kek))
     return false;
   unsigned long long opened = 0;
@@ -275,10 +299,8 @@ bool open(const QByteArray &wire, const QByteArray &password, QByteArray *plain)
       static_cast<unsigned long long>(wad.size()),
       wrapNonce.data(), kek.data());
   sodium_memzero(kek.data(), kek.size());
-  if (rc != 0 || opened != dek.size()) {
-    sodium_memzero(dek.data(), dek.size());
+  if (rc != 0 || opened != dek.size())
     return false;
-  }
 
   QByteArray staged;
   staged.resize(qsizetype(cipherSize) - kTag);
@@ -513,6 +535,15 @@ private slots:
     QByteArray decoded;
     QVERIFY(open(encrypted, pw, &decoded));
     QCOMPARE(decoded, payload);
+
+    // A second alias class: the password itself can accidentally be passed
+    // as the output buffer, which must never be erased or overwritten.
+    QByteArray testPassword(pw);
+    const QByteArray originalPassword(testPassword);
+    QVERIFY(!seal(payload, testPassword, &testPassword));
+    QCOMPARE(testPassword, originalPassword);
+    QVERIFY(!open(encrypted, testPassword, &testPassword));
+    QCOMPARE(testPassword, originalPassword);
   }
 
   void corruptedEncryptedDiskFixtureRemainsUnchangedOnFailure() {
@@ -654,6 +685,48 @@ private slots:
     // This does NOT approve raw-byte passwords for the GUI. It proves
     // normalization must be a conscious, versioned product decision
     // before real credentials and backups are ever encrypted.
+  }
+
+  void scopedKeyWipeGuardsRunAndZeroSyntheticStorage() {
+    // Verify actual bytes are zeroed on scope exit, not just the counter.
+    Key dummy{};
+    dummy.fill(0x5a);
+    const unsigned int before = keyWipeGuardsRun;
+    {
+      ScopedKeyWipe wipeDummy(dummy.data(), dummy.size());
+      QCOMPARE(dummy.front(), static_cast<unsigned char>(0x5a));
+    }
+    for (unsigned char byte : dummy)
+      QCOMPARE(byte, static_cast<unsigned char>(0));
+    QCOMPARE(keyWipeGuardsRun, before + 1);
+
+    QByteArray wire, opened;
+    const unsigned int a = keyWipeGuardsRun;
+    QVERIFY(seal(payload, pw, &wire));
+    QCOMPARE(keyWipeGuardsRun, a + 2); // derived KEK and data key
+    QVERIFY(open(wire, pw, &opened));
+    QCOMPARE(opened, payload);
+    QCOMPARE(keyWipeGuardsRun, a + 4);
+
+    // Wrong passwords and authenticated corruption must also leave scopes.
+    QByteArray failed("previous stale output");
+    QVERIFY(!open(wire, QByteArray("wrong synthetic pass"), &failed));
+    QVERIFY(failed.isEmpty());
+    QCOMPARE(keyWipeGuardsRun, a + 6);
+
+    QByteArray damaged(wire);
+    damaged[damaged.size() - 1] =
+        char(quint8(damaged.back()) ^ 1u);
+    QVERIFY(!open(damaged, pw, &failed));
+    QVERIFY(failed.isEmpty());
+    QCOMPARE(keyWipeGuardsRun, a + 8);
+
+    // A structurally invalid header is rejected BEFORE key allocation.
+    QByteArray malformed(wire);
+    malformed[12] = char(0xff);
+    const unsigned int preReject = keyWipeGuardsRun;
+    QVERIFY(!open(malformed, pw, &failed));
+    QCOMPARE(keyWipeGuardsRun, preReject);
   }
 
   void candidateNfcNormalizesEquivalentSyntheticPasswords() {
