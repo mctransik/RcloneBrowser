@@ -11,6 +11,7 @@
 #include <QString>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <utility>
@@ -219,7 +220,8 @@ bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
       reinterpret_cast<const unsigned char *>(wad.constData()),
       static_cast<unsigned long long>(wad.size()), nullptr,
       x.wrapNonce.data(), kek.data());
-  // Both keys are wiped by scope guards on success AND on every return.
+  // Wipe immediately after last use; the RAII guard handles early returns.
+  sodium_memzero(kek.data(), kek.size());
   if (rc != 0 || written != static_cast<unsigned long long>(kWrapped))
     return false;
   QByteArray ciphertext;
@@ -232,6 +234,7 @@ bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
       reinterpret_cast<const unsigned char *>(pad.constData()),
       static_cast<unsigned long long>(pad.size()), nullptr,
       x.payloadNonce.data(), x.dek.data());
+  sodium_memzero(x.dek.data(), x.dek.size());
   if (rc != 0 || written != static_cast<unsigned long long>(ciphertext.size()))
     return false;
   out->reserve(header.size() + wrapped.size() + ciphertext.size());
@@ -295,6 +298,7 @@ bool open(const QByteArray &wire, const QByteArray &password, QByteArray *plain)
       reinterpret_cast<const unsigned char *>(wad.constData()),
       static_cast<unsigned long long>(wad.size()),
       wrapNonce.data(), kek.data());
+  sodium_memzero(kek.data(), kek.size());
   if (rc != 0 || opened != dek.size())
     return false;
 
@@ -308,6 +312,7 @@ bool open(const QByteArray &wire, const QByteArray &password, QByteArray *plain)
       reinterpret_cast<const unsigned char *>(pad.constData()),
       static_cast<unsigned long long>(pad.size()),
       payloadNonce.data(), dek.data());
+  sodium_memzero(dek.data(), dek.size());
   if (rc != 0 || opened != static_cast<unsigned long long>(staged.size())) {
     if (!staged.isEmpty())
       sodium_memzero(staged.data(), static_cast<size_t>(staged.size()));
