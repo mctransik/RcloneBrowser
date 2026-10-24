@@ -92,6 +92,42 @@ bool derive(const QByteArray &password, const Salt &salt, Key *key) {
       kOps, static_cast<size_t>(kMemKiB) * 1024,
       crypto_pwhash_ALG_ARGON2ID13) == 0;
 }
+// RESEARCH CANDIDATE ONLY: this helper is NOT used automatically by the
+// existing raw-byte RBTSENC2 wire codec. A real GUI/storage contract must be
+// independently reviewed and explicitly versioned before integration.
+//
+// Candidate v1: UTF-16 QString -> validate scalars -> NFC -> UTF-8.
+// Password-size policy is in final UTF-8 bytes, not displayed characters.
+// Reject malformed UTF-16, embedded NUL and excessively long input *before*
+// Argon2id. Qt's QString/QByteArray implicit sharing is not a reviewed
+// secure-memory design; NEVER handle real passwords with this prototype.
+bool researchNfcPasswordBytes(const QString &input, QByteArray *bytes) {
+  if (!bytes)
+    return false;
+  bytes->clear();
+  // Bound normalization work as well as final output.
+  if (input.isEmpty() || input.size() > 4096)
+    return false;
+  for (qsizetype i = 0; i < input.size(); ++i) {
+    const QChar c = input.at(i);
+    if (c.unicode() == 0)
+      return false;
+    if (c.isHighSurrogate()) {
+      if (i + 1 >= input.size() || !input.at(i + 1).isLowSurrogate())
+        return false;
+      ++i;
+    } else if (c.isLowSurrogate()) {
+      return false;
+    }
+  }
+  const QString normalized = input.normalized(QString::NormalizationForm_C);
+  QByteArray encoded = normalized.toUtf8();
+  if (encoded.isEmpty() || encoded.size() > 4096 || encoded.contains('\0'))
+    return false;
+  *bytes = std::move(encoded);
+  return true;
+}
+
 Inputs randomInputs() {
   Inputs x;
   randombytes_buf(x.fileId.data(), x.fileId.size());
@@ -618,6 +654,84 @@ private slots:
     // This does NOT approve raw-byte passwords for the GUI. It proves
     // normalization must be a conscious, versioned product decision
     // before real credentials and backups are ever encrypted.
+  }
+
+  void candidateNfcNormalizesEquivalentSyntheticPasswords() {
+    // The *legacy research codec* still sees raw bytes, as the prior test
+    // verifies. Only explicit use of this candidate normalizes.
+    const QString composed = QString::fromUtf8(
+        QByteArray::fromHex("436166c3a9"));
+    const QString decomposed = QString::fromUtf8(
+        QByteArray::fromHex("43616665cc81"));
+    QVERIFY(composed != decomposed);
+    QByteArray a, b;
+    QVERIFY(researchNfcPasswordBytes(composed, &a));
+    QVERIFY(researchNfcPasswordBytes(decomposed, &b));
+    QCOMPARE(a, QByteArray::fromHex("436166c3a9"));
+    QCOMPARE(a, b);
+
+    QByteArray wire;
+    QVERIFY(seal(payload, a, &wire));
+    QByteArray restored;
+    QVERIFY(open(wire, b, &restored));
+    QCOMPARE(restored, payload);
+  }
+
+  void candidateNfcPreservesCompatibilityDistinctCharacters() {
+    // NFC deliberately differs from NFKC: a circled '1' must NOT silently
+    // turn into plain '1'. This is only a draft candidate, not approval.
+    const QString circledOne = QString::fromUtf8(
+        QByteArray::fromHex("e291a0"));
+    QByteArray normalizedCircled, plainOne;
+    QVERIFY(researchNfcPasswordBytes(circledOne, &normalizedCircled));
+    QVERIFY(researchNfcPasswordBytes(QStringLiteral("1"), &plainOne));
+    QCOMPARE(normalizedCircled, QByteArray::fromHex("e291a0"));
+    QVERIFY(normalizedCircled != plainOne);
+
+    const QString symbol = QString::fromUtf8(
+        QByteArray::fromHex("f09f9492")); // valid supplementary scalar
+    QByteArray bytes;
+    QVERIFY(researchNfcPasswordBytes(symbol, &bytes));
+    QCOMPARE(bytes, QByteArray::fromHex("f09f9492"));
+  }
+
+  void candidateNfcRejectsInvalidAndOversizedInputsWithoutKdf() {
+    // Errors clear proposed password bytes without ever executing Argon2id.
+    QByteArray bytes("stale password bytes");
+    const unsigned int calls = kdfCalls;
+
+    QVERIFY(!researchNfcPasswordBytes(QString(), &bytes));
+    QVERIFY(bytes.isEmpty());
+
+    QVERIFY(!researchNfcPasswordBytes(
+        QStringLiteral("a") + QChar(ushort(0)) + QStringLiteral("b"),
+        &bytes));
+    QVERIFY(bytes.isEmpty());
+
+    QVERIFY(!researchNfcPasswordBytes(
+        QString(1, QChar(ushort(0xd800))), &bytes)); // lone high surrogate
+    QVERIFY(bytes.isEmpty());
+    QVERIFY(!researchNfcPasswordBytes(
+        QString(1, QChar(ushort(0xdc00))), &bytes)); // lone low surrogate
+    QVERIFY(bytes.isEmpty());
+
+    QVERIFY(researchNfcPasswordBytes(
+        QString(4096, QChar(u'a')), &bytes));
+    QCOMPARE(bytes.size(), 4096);
+    QVERIFY(!researchNfcPasswordBytes(
+        QString(4097, QChar(u'a')), &bytes));
+    QVERIFY(bytes.isEmpty());
+
+    // The cap is the byte count after UTF-8, not the number of UTF-16 units.
+    QVERIFY(researchNfcPasswordBytes(
+        QString(2048, QChar(ushort(0x00e9))), &bytes));
+    QCOMPARE(bytes.size(), 4096);
+    QVERIFY(!researchNfcPasswordBytes(
+        QString(2049, QChar(ushort(0x00e9))), &bytes));
+    QVERIFY(bytes.isEmpty());
+
+    QVERIFY(!researchNfcPasswordBytes(QStringLiteral("anything"), nullptr));
+    QCOMPARE(kdfCalls, calls);
   }
 
   void unsupportedMagicAndExtraSlotsFailClosed() {
