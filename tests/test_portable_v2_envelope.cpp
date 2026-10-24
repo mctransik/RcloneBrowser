@@ -194,7 +194,7 @@ bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
           const Inputs *fixture = nullptr) {
   // The API must not destroy input when the caller accidentally aliases
   // its output buffer with the plaintext buffer.
-  if (!out || out == &plain)
+  if (!out || out == &plain || out == &password)
     return false;
   out->clear();
   if (sodium_init() < 0 || plain.size() > kMaxPlain ||
@@ -249,7 +249,7 @@ bool seal(const QByteArray &plain, const QByteArray &password, QByteArray *out,
 bool open(const QByteArray &wire, const QByteArray &password, QByteArray *plain) {
   // Never wipe the stored ciphertext if the caller passes its address as
   // the output parameter. Such a programming error must be fail-closed.
-  if (!plain || plain == &wire)
+  if (!plain || plain == &wire || plain == &password)
     return false;
   plain->clear();
   if (sodium_init() < 0 || password.isEmpty() || password.size() > 4096 ||
@@ -535,6 +535,15 @@ private slots:
     QByteArray decoded;
     QVERIFY(open(encrypted, pw, &decoded));
     QCOMPARE(decoded, payload);
+
+    // A second alias class: the password itself can accidentally be passed
+    // as the output buffer, which must never be erased or overwritten.
+    QByteArray testPassword(pw);
+    const QByteArray originalPassword(testPassword);
+    QVERIFY(!seal(payload, testPassword, &testPassword));
+    QCOMPARE(testPassword, originalPassword);
+    QVERIFY(!open(encrypted, testPassword, &testPassword));
+    QCOMPARE(testPassword, originalPassword);
   }
 
   void corruptedEncryptedDiskFixtureRemainsUnchangedOnFailure() {
