@@ -2,6 +2,7 @@
 // No actual user password, RcloneBrowser tasks, or release integration.
 #include <QtTest>
 #include <sodium.h>
+#include "portable_recovery_lock_policy.h"
 
 #include <cstddef>
 #include <cstdlib>
@@ -10,39 +11,11 @@
 
 namespace {
 
-// Distinguish a *failed* attempt from never checking at all. Merely calling
-// sodium_malloc() is NOT evidence that the memory is actually mlocked.
-enum class LockAttempt { NotAttempted, Failed, Succeeded };
-enum class LockPolicy {
-  Strict,           // no operation without confirmed locking
-  BestEffort,       // allow but explicitly record a degraded protection
-  RecoveryOnly      // never create/migrate if lock unavailable
-};
-enum class Purpose { CreateOrMigrate, RecoverExisting };
-
-struct PolicyDecision {
-  bool allowed = false;
-  bool mayClaimLocked = false;
-  bool degraded = false;
-};
-
-// This is a *decision-table proposal*, NOT approved production behavior.
-// No method here changes privileges or OS security settings.
-PolicyDecision evaluate(LockPolicy policy, Purpose purpose,
-                        LockAttempt attempt) noexcept {
-  if (attempt == LockAttempt::NotAttempted)
-    return {}; // never present a skipped probe as successful protection
-  if (attempt == LockAttempt::Succeeded)
-    return {true, true, false};
-
-  // The attempted page lock failed. Claiming mlock success would be a lie.
-  if (policy == LockPolicy::Strict)
-    return {};
-  if (policy == LockPolicy::RecoveryOnly &&
-      purpose == Purpose::CreateOrMigrate)
-    return {};
-  return {true, false, true};
-}
+using rb_research_lock::LockAttempt;
+using rb_research_lock::LockPolicy;
+using rb_research_lock::Purpose;
+using rb_research_lock::PolicyDecision;
+using rb_research_lock::evaluate;
 
 static_assert(std::is_trivially_copyable_v<PolicyDecision>);
 } // namespace
