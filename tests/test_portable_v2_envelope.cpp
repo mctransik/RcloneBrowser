@@ -9,6 +9,7 @@
 #include <QSaveFile>
 #include <QTemporaryDir>
 #include <QString>
+#include "portable_recovery_lock_policy.h"
 
 #include <array>
 #include <cstddef>
@@ -321,6 +322,41 @@ bool open(const QByteArray &wire, const QByteArray &password, QByteArray *plain)
   *plain = std::move(staged);
   return true;
 }
+// Experiment ONLY: couple the exact synthetic lock policy from PR #22 to
+// the existing research decoder, without touching the real task file system.
+// A failed or unattempted lock never silently degrades into plaintext access.
+enum class ResearchRestoreState {
+  DeniedByPolicy,
+  DegradedAcknowledgementRequired,
+  AuthenticationFailed,
+  Recovered
+};
+struct ResearchRestoreOutcome {
+  ResearchRestoreState state;
+  bool degraded;
+};
+ResearchRestoreOutcome researchRestoreExistingFixture(
+    const QByteArray &protectedBytes, const QByteArray &passwordBytes,
+    rb_research_lock::LockPolicy policy,
+    rb_research_lock::LockAttempt observedLock,
+    bool userExplicitlyAcceptedDegraded, QByteArray *decoded) {
+  // A caller accidentally aliasing password/ciphertext must not erase it.
+  if (!decoded || decoded == &protectedBytes || decoded == &passwordBytes)
+    return {ResearchRestoreState::DeniedByPolicy, false};
+  decoded->clear();
+  const auto decision = rb_research_lock::evaluate(
+      policy, rb_research_lock::Purpose::RecoverExisting, observedLock);
+  if (!decision.allowed)
+    return {ResearchRestoreState::DeniedByPolicy, false};
+  if (decision.degraded && !userExplicitlyAcceptedDegraded)
+    return {ResearchRestoreState::DegradedAcknowledgementRequired, true};
+  // The underlying research decoder performs authenticated decryption.
+  // Any wrong password, truncated payload, or tampering must fail closed.
+  if (!open(protectedBytes, passwordBytes, decoded))
+    return {ResearchRestoreState::AuthenticationFailed, decision.degraded};
+  return {ResearchRestoreState::Recovered, decision.degraded};
+}
+
 } // namespace
 
 class TestPortableV2Envelope : public QObject {
@@ -805,6 +841,189 @@ private slots:
 
     QVERIFY(!researchNfcPasswordBytes(QStringLiteral("anything"), nullptr));
     QCOMPARE(kdfCalls, calls);
+  }
+
+  void restoredIndependentFixtureRequiresExplicitDegradedConsent() {
+    // Copy public 202-byte RBTSENC2 fixture to a different temporary
+    // directory as a synthetic archive transfer. NO real tasks.bin.
+    QTemporaryDir archiveDir, destinationDir;
+    QVERIFY(archiveDir.isValid());
+    QVERIFY(destinationDir.isValid());
+    QFile committedFixture(QCoreApplication::applicationDirPath() +
+                           QStringLiteral("/rbtsenc2-synthetic-v1.hex"));
+    QVERIFY(committedFixture.open(QIODevice::ReadOnly));
+    const QByteArray hex = committedFixture.readAll().trimmed();
+    QCOMPARE(hex.size(), 404);
+    const QByteArray protectedFixture = QByteArray::fromHex(hex);
+    QCOMPARE(protectedFixture.size(), 202);
+    QCOMPARE(protectedFixture.toHex(), hex);
+    const QString archivePath = archiveDir.filePath(
+        QStringLiteral("synthetic-recovery-archive.rbtsenc2"));
+    const QString copiedPath = destinationDir.filePath(
+        QStringLiteral("copied-synthetic-archive.rbtsenc2"));
+    {
+      QSaveFile archiveWriter(archivePath);
+      archiveWriter.setDirectWriteFallback(false);
+      QVERIFY(archiveWriter.open(QIODevice::WriteOnly));
+      QCOMPARE(archiveWriter.write(protectedFixture),
+               qint64(protectedFixture.size()));
+      QVERIFY(archiveWriter.commit());
+    }
+    QVERIFY(QFile::copy(archivePath, copiedPath));
+    QFile copied(copiedPath);
+    QVERIFY(copied.open(QIODevice::ReadOnly));
+    const QByteArray relocatedBytes = copied.read(kTotalMax + 1);
+    QCOMPARE(copied.error(), QFileDevice::NoError);
+    QVERIFY(copied.atEnd());
+    copied.close();
+    QCOMPARE(relocatedBytes, protectedFixture);
+
+    using namespace rb_research_lock;
+    const unsigned int before = kdfCalls;
+    QByteArray result("stale synthetic plaintext");
+
+    // Strict mode fails to unlock when locking was actually denied.
+    auto x = researchRestoreExistingFixture(
+        relocatedBytes, pw, LockPolicy::Strict, LockAttempt::Failed,
+        true, &result);
+    QCOMPARE(x.state, ResearchRestoreState::DeniedByPolicy);
+    QVERIFY(!x.degraded);
+    QVERIFY(result.isEmpty());
+    QCOMPARE(kdfCalls, before);
+
+    // Unknown lock state also rejects without starting Argon2id.
+    x = researchRestoreExistingFixture(
+        relocatedBytes, pw, LockPolicy::BestEffort,
+        LockAttempt::NotAttempted, true, &result);
+    QCOMPARE(x.state, ResearchRestoreState::DeniedByPolicy);
+    QCOMPARE(kdfCalls, before);
+
+    // Degraded recovery is NEVER silently allowed just because the
+    // experimental policy could permit it.
+    for (LockPolicy candidate : {LockPolicy::BestEffort,
+                                 LockPolicy::RecoveryOnly}) {
+      result = "stale";
+      x = researchRestoreExistingFixture(
+          relocatedBytes, pw, candidate, LockAttempt::Failed,
+          false, &result);
+      QCOMPARE(x.state,
+               ResearchRestoreState::DegradedAcknowledgementRequired);
+      QVERIFY(x.degraded);
+      QVERIFY(result.isEmpty());
+      QCOMPARE(kdfCalls, before);
+    }
+
+    // A *synthetic* acknowledgement explicitly enables experimental
+    // password recovery; it does NOT imply OS memory was locked.
+    x = researchRestoreExistingFixture(
+        relocatedBytes, pw, LockPolicy::RecoveryOnly, LockAttempt::Failed,
+        true, &result);
+    QCOMPARE(x.state, ResearchRestoreState::Recovered);
+    QVERIFY(x.degraded);
+    QCOMPARE(result, payload);
+    QCOMPARE(kdfCalls, before + 1);
+
+    // Confirmed OS locking allows the strict simulated policy too.
+    x = researchRestoreExistingFixture(
+        relocatedBytes, pw, LockPolicy::Strict, LockAttempt::Succeeded,
+        false, &result);
+    QCOMPARE(x.state, ResearchRestoreState::Recovered);
+    QVERIFY(!x.degraded);
+    QCOMPARE(result, payload);
+    QCOMPARE(kdfCalls, before + 2);
+
+    QFile preservedArchive(archivePath), preservedCopy(copiedPath);
+    QVERIFY(preservedArchive.open(QIODevice::ReadOnly));
+    QCOMPARE(preservedArchive.readAll(), protectedFixture);
+    QVERIFY(preservedCopy.open(QIODevice::ReadOnly));
+    QCOMPARE(preservedCopy.readAll(), protectedFixture);
+  }
+
+  void failedRecoveryNeverDestroysOriginalCiphertext() {
+    using namespace rb_research_lock;
+    QTemporaryDir sandbox;
+    QVERIFY(sandbox.isValid());
+    const QString archivePath = sandbox.filePath(
+        QStringLiteral("unchanged-encrypted-synthetic-archive"));
+    QByteArray encrypted;
+    QVERIFY(seal(payload, pw, &encrypted));
+    {
+      QSaveFile writer(archivePath);
+      writer.setDirectWriteFallback(false);
+      QVERIFY(writer.open(QIODevice::WriteOnly));
+      QCOMPARE(writer.write(encrypted), qint64(encrypted.size()));
+      QVERIFY(writer.commit());
+    }
+    const unsigned int start = kdfCalls;
+    QByteArray restored("previous synthetic output");
+    // Wrong password must not trigger plaintext fallback.
+    auto outcome = researchRestoreExistingFixture(
+        encrypted, QByteArray("wrong synthetic pass"),
+        LockPolicy::RecoveryOnly, LockAttempt::Failed, true, &restored);
+    QCOMPARE(outcome.state, ResearchRestoreState::AuthenticationFailed);
+    QVERIFY(outcome.degraded);
+    QVERIFY(restored.isEmpty());
+    QCOMPARE(kdfCalls, start + 1);
+
+    QByteArray corrupted(encrypted);
+    corrupted[corrupted.size() - 1] =
+        char(quint8(corrupted.back()) ^ 1u);
+    restored = "previous";
+    outcome = researchRestoreExistingFixture(
+        corrupted, pw, LockPolicy::RecoveryOnly, LockAttempt::Failed,
+        true, &restored);
+    QCOMPARE(outcome.state, ResearchRestoreState::AuthenticationFailed);
+    QVERIFY(restored.isEmpty());
+    QCOMPARE(kdfCalls, start + 2);
+
+    // Broken metadata is rejected by the decoder; no costly KDF.
+    QByteArray malformed(encrypted);
+    malformed[12] = char(0xff);
+    outcome = researchRestoreExistingFixture(
+        malformed, pw, LockPolicy::RecoveryOnly, LockAttempt::Failed,
+        true, &restored);
+    QCOMPARE(outcome.state, ResearchRestoreState::AuthenticationFailed);
+    QCOMPARE(kdfCalls, start + 2);
+    QVERIFY(restored.isEmpty());
+
+    // Reject accidental output/input aliasing BEFORE clearing anything.
+    const QByteArray encryptedBeforeAlias(encrypted);
+    outcome = researchRestoreExistingFixture(
+        encrypted, pw, LockPolicy::Strict, LockAttempt::Succeeded,
+        true, &encrypted);
+    QCOMPARE(outcome.state, ResearchRestoreState::DeniedByPolicy);
+    QCOMPARE(encrypted, encryptedBeforeAlias);
+
+    QByteArray pass(pw);
+    const QByteArray passBeforeAlias(pass);
+    outcome = researchRestoreExistingFixture(
+        encrypted, pass, LockPolicy::Strict, LockAttempt::Succeeded,
+        true, &pass);
+    QCOMPARE(outcome.state, ResearchRestoreState::DeniedByPolicy);
+    QCOMPARE(pass, passBeforeAlias);
+
+    QFile retained(archivePath);
+    QVERIFY(retained.open(QIODevice::ReadOnly));
+    QCOMPARE(retained.readAll(), encrypted);
+  }
+
+  void recoveryOnlyPolicyCannotAuthorizeNewBackupWithoutLock() {
+    using namespace rb_research_lock;
+    const auto denied = evaluate(LockPolicy::RecoveryOnly,
+                                 Purpose::CreateOrMigrate,
+                                 LockAttempt::Failed);
+    QVERIFY(!denied.allowed);
+    QVERIFY(!denied.mayClaimLocked);
+    const auto unknown = evaluate(LockPolicy::RecoveryOnly,
+                                  Purpose::CreateOrMigrate,
+                                  LockAttempt::NotAttempted);
+    QVERIFY(!unknown.allowed);
+    const auto yes = evaluate(LockPolicy::RecoveryOnly,
+                              Purpose::CreateOrMigrate,
+                              LockAttempt::Succeeded);
+    QVERIFY(yes.allowed);
+    QVERIFY(yes.mayClaimLocked);
+    QVERIFY(!yes.degraded);
   }
 
   void unsupportedMagicAndExtraSlotsFailClosed() {
