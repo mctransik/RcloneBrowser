@@ -227,6 +227,23 @@ if(RB_BUILD_TESTS)
       endif()
       add_test(NAME portable_v2_envelope COMMAND test_portable_v2_envelope)
 
+      # Separate, independent decoder of the synthetic RBTSENC2 wire fixture.
+      # This must not reuse the in-test seal/open implementation or be linked
+      # into the real application. The same pinned vector is used on each OS.
+      add_executable(test_portable_independent_recovery
+                     ../tests/test_portable_independent_recovery.cpp)
+      target_link_libraries(test_portable_independent_recovery PRIVATE
+                            Qt::Core Qt::Test ${SODIUM_PROBE_TARGET})
+      set_target_properties(test_portable_independent_recovery PROPERTIES
+                            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+      if(WIN32)
+        add_custom_command(TARGET test_portable_independent_recovery POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${SODIUM_PROBE_DLL}" "$<TARGET_FILE_DIR:test_portable_independent_recovery>"
+          VERBATIM)
+      endif()
+      add_test(NAME portable_independent_recovery COMMAND test_portable_independent_recovery)
+
       # Separate research-only guarded-memory lifetime tests. This executable
       # never links into the application and has NO install/package rule.
       add_executable(test_portable_guarded_key
