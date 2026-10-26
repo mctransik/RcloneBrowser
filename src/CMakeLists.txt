@@ -243,6 +243,23 @@ if(RB_BUILD_TESTS)
       endif()
       add_test(NAME portable_guarded_key COMMAND test_portable_guarded_key)
 
+      # Research-only decision matrix for mandatory vs degraded OS memory
+      # locking, with a real-OS probe using public synthetic bytes only.
+      # This is NOT an application policy or release-packaged executable.
+      add_executable(test_portable_memory_lock_policy
+                     ../tests/test_portable_memory_lock_policy.cpp)
+      target_link_libraries(test_portable_memory_lock_policy PRIVATE
+                            Qt::Core Qt::Test ${SODIUM_PROBE_TARGET})
+      set_target_properties(test_portable_memory_lock_policy PROPERTIES
+                            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+      if(WIN32)
+        add_custom_command(TARGET test_portable_memory_lock_policy POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${SODIUM_PROBE_DLL}" "$<TARGET_FILE_DIR:test_portable_memory_lock_policy>"
+          VERBATIM)
+      endif()
+      add_test(NAME portable_memory_lock_policy COMMAND test_portable_memory_lock_policy)
+
       # Compile-check a developer-only bounded Argon2id performance probe.
       # No CTest registration: CI must NEVER benchmark ephemeral runners and
       # interpret their results as an end-user hardware security policy.
