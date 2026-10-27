@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QTemporaryDir>
+#include "portable_recovery_lock_policy.h"
 
 #include <sodium.h>
 #include <array>
@@ -160,6 +161,84 @@ bool saveProtectedCopy(const QString &filename, const QByteArray &wire) {
          out.write(wire) == qint64(wire.size()) &&
          out.commit();
 }
+
+// Synthetic-only transactional recovery experiment. NOT production code:
+// the "OS lock" result and consent are caller-supplied test values, not OS
+// attestation or an implemented GUI consent. The destination may contain
+// previously restored test data, which must survive all error paths.
+enum class RestoreFault { None, CancelAfterPartialWrite, CancelBeforeCommit };
+enum class RestoreState {
+  UnsafeTarget,
+  DeniedByPolicy,
+  ConsentRequired,
+  AuthenticationFailed,
+  StorageFailed,
+  Written
+};
+struct RestoreOutcome {
+  RestoreState state;
+  bool degraded;
+};
+
+RestoreOutcome researchRestoreAtomically(
+    const QByteArray &encryptedBytes, const QByteArray &password,
+    const QString &sourceEncryptedPath, const QString &destinationPath,
+    rb_research_lock::LockPolicy policy,
+    rb_research_lock::LockAttempt lockAttempt,
+    bool explicitDegradedConsent,
+    RestoreFault simulatedFault = RestoreFault::None) {
+  const QFileInfo source(sourceEncryptedPath), destination(destinationPath);
+  // This small test-only safeguard prevents overwriting the encrypted
+  // source through identical paths or obvious aliases. Full production
+  // path/symlink/race-hardening remains UNIMPLEMENTED.
+  const QString canonicalSource = source.canonicalFilePath();
+  if (!source.exists() || canonicalSource.isEmpty() ||
+      destinationPath.isEmpty() ||
+      source.absoluteFilePath() == destination.absoluteFilePath() ||
+      (!destination.canonicalFilePath().isEmpty() &&
+       canonicalSource == destination.canonicalFilePath()))
+    return {RestoreState::UnsafeTarget, false};
+
+  const auto decision = rb_research_lock::evaluate(
+      policy, rb_research_lock::Purpose::RecoverExisting, lockAttempt);
+  if (!decision.allowed)
+    return {RestoreState::DeniedByPolicy, false};
+  if (decision.degraded && !explicitDegradedConsent)
+    return {RestoreState::ConsentRequired, true};
+
+  QByteArray recovered;
+  if (!independentRead(encryptedBytes, password, &recovered))
+    return {RestoreState::AuthenticationFailed, decision.degraded};
+
+  // With direct-write fallback *disabled*, a failure cannot quietly write
+  // straight into the old destination. Atomic replacement is QSaveFile's
+  // intended contract, but does not prove power-loss durability on every FS.
+  QSaveFile output(destinationPath);
+  output.setDirectWriteFallback(false);
+  if (!output.open(QIODevice::WriteOnly))
+    return {RestoreState::StorageFailed, decision.degraded};
+
+  if (simulatedFault == RestoreFault::CancelAfterPartialWrite) {
+    const auto half = recovered.size() / 2;
+    if (half > 0)
+      output.write(recovered.constData(), half);
+    output.cancelWriting();
+    return {RestoreState::StorageFailed, decision.degraded};
+  }
+
+  if (output.write(recovered) != qint64(recovered.size())) {
+    output.cancelWriting();
+    return {RestoreState::StorageFailed, decision.degraded};
+  }
+  if (simulatedFault == RestoreFault::CancelBeforeCommit) {
+    output.cancelWriting();
+    return {RestoreState::StorageFailed, decision.degraded};
+  }
+  if (!output.commit())
+    return {RestoreState::StorageFailed, decision.degraded};
+  return {RestoreState::Written, decision.degraded};
+}
+
 } // namespace
 
 class TestPortableIndependentRecovery final : public QObject {
@@ -236,6 +315,153 @@ private slots:
     QFile saved(path);
     QVERIFY(saved.open(QIODevice::ReadOnly));
     QCOMPARE(saved.readAll(), protectedBytes);
+  }
+
+  void transactionalRestorePreservesPreviousOutputOnInterruptions() {
+    // Every file is synthetic and confined to a disposable directory.
+    using namespace rb_research_lock;
+    const QByteArray cipher = committedSyntheticFixture();
+    QCOMPARE(cipher.size(), kFixtureSize);
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString source = tmp.filePath(
+        QStringLiteral("encrypted-synthetic-backup.rbt"));
+    const QString destination = tmp.filePath(
+        QStringLiteral("already-restored-synthetic-output.txt"));
+    QVERIFY(saveProtectedCopy(source, cipher));
+    const QByteArray previous("PREVIOUS SYNTHETIC OUTPUT MUST SURVIVE");
+    QVERIFY(saveProtectedCopy(destination, previous));
+    const unsigned int baseline = kdfCalls;
+
+    // No locking verification => deny BEFORE any KDF and file I/O.
+    auto decision = researchRestoreAtomically(
+        cipher, QByteArray(kSyntheticPassword), source, destination,
+        LockPolicy::RecoveryOnly, LockAttempt::NotAttempted, true);
+    QCOMPARE(decision.state, RestoreState::DeniedByPolicy);
+    QCOMPARE(kdfCalls, baseline);
+
+    // Actual locking failure cannot silently override missing consent.
+    decision = researchRestoreAtomically(
+        cipher, QByteArray(kSyntheticPassword), source, destination,
+        LockPolicy::RecoveryOnly, LockAttempt::Failed, false);
+    QCOMPARE(decision.state, RestoreState::ConsentRequired);
+    QVERIFY(decision.degraded);
+    QCOMPARE(kdfCalls, baseline);
+
+    // Even explicit consent cannot override Strict's refusal.
+    decision = researchRestoreAtomically(
+        cipher, QByteArray(kSyntheticPassword), source, destination,
+        LockPolicy::Strict, LockAttempt::Failed, true);
+    QCOMPARE(decision.state, RestoreState::DeniedByPolicy);
+    QCOMPARE(kdfCalls, baseline);
+
+    // Interrupted staged output (including a partial write) leaves existing
+    // output unchanged and never overwrites the encrypted source.
+    for (const RestoreFault fault : {RestoreFault::CancelAfterPartialWrite,
+                                     RestoreFault::CancelBeforeCommit}) {
+      decision = researchRestoreAtomically(
+          cipher, QByteArray(kSyntheticPassword), source, destination,
+          LockPolicy::RecoveryOnly, LockAttempt::Failed, true, fault);
+      QCOMPARE(decision.state, RestoreState::StorageFailed);
+      QVERIFY(decision.degraded);
+      QFile preserved(destination), encrypted(source);
+      QVERIFY(preserved.open(QIODevice::ReadOnly));
+      QCOMPARE(preserved.readAll(), previous);
+      QVERIFY(encrypted.open(QIODevice::ReadOnly));
+      QCOMPARE(encrypted.readAll(), cipher);
+    }
+    QCOMPARE(kdfCalls, baseline + 2);
+
+    // Successful recovery can replace prior synthetic output atomically.
+    decision = researchRestoreAtomically(
+        cipher, QByteArray(kSyntheticPassword), source, destination,
+        LockPolicy::Strict, LockAttempt::Succeeded, false);
+    QCOMPARE(decision.state, RestoreState::Written);
+    QVERIFY(!decision.degraded);
+    QFile recovered(destination), stillEncrypted(source);
+    QVERIFY(recovered.open(QIODevice::ReadOnly));
+    QCOMPARE(recovered.readAll(), QByteArray(kSyntheticPlain));
+    QVERIFY(stillEncrypted.open(QIODevice::ReadOnly));
+    QCOMPARE(stillEncrypted.readAll(), cipher);
+    QCOMPARE(kdfCalls, baseline + 3);
+  }
+
+  void failedAuthenticationCannotOverwriteRestoredOutputOrEncryptedInput() {
+    using namespace rb_research_lock;
+    const QByteArray cipher = committedSyntheticFixture();
+    QCOMPARE(cipher.size(), kFixtureSize);
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString source = tmp.filePath(QStringLiteral("source.rbt"));
+    const QString destination = tmp.filePath(QStringLiteral("destination.txt"));
+    QVERIFY(saveProtectedCopy(source, cipher));
+    const QByteArray previous("PREVIOUS RESTORED CONTENT");
+    QVERIFY(saveProtectedCopy(destination, previous));
+    const unsigned int before = kdfCalls;
+
+    auto x = researchRestoreAtomically(
+        cipher, QByteArray("wrong synthetic password"), source, destination,
+        LockPolicy::RecoveryOnly, LockAttempt::Failed, true);
+    QCOMPARE(x.state, RestoreState::AuthenticationFailed);
+    QVERIFY(x.degraded);
+
+    QByteArray tampered = cipher;
+    tampered[tampered.size() - 1] =
+        char(static_cast<unsigned char>(tampered.back()) ^ 1u);
+    x = researchRestoreAtomically(
+        tampered, QByteArray(kSyntheticPassword), source, destination,
+        LockPolicy::RecoveryOnly, LockAttempt::Failed, true);
+    QCOMPARE(x.state, RestoreState::AuthenticationFailed);
+    QCOMPARE(kdfCalls, before + 2);
+
+    // Invalid KDF header must fail BEFORE spending Argon2id resources.
+    tampered = cipher;
+    tampered[12] = char(0xff);
+    x = researchRestoreAtomically(
+        tampered, QByteArray(kSyntheticPassword), source, destination,
+        LockPolicy::RecoveryOnly, LockAttempt::Failed, true);
+    QCOMPARE(x.state, RestoreState::AuthenticationFailed);
+    QCOMPARE(kdfCalls, before + 2);
+
+    QFile dest(destination), encrypted(source);
+    QVERIFY(dest.open(QIODevice::ReadOnly));
+    QCOMPARE(dest.readAll(), previous);
+    QVERIFY(encrypted.open(QIODevice::ReadOnly));
+    QCOMPARE(encrypted.readAll(), cipher);
+
+    // Never clobber the original encrypted source, even with a correct pw.
+    x = researchRestoreAtomically(
+        cipher, QByteArray(kSyntheticPassword), source, source,
+        LockPolicy::Strict, LockAttempt::Succeeded, false);
+    QCOMPARE(x.state, RestoreState::UnsafeTarget);
+    QCOMPARE(kdfCalls, before + 2);
+  }
+
+  void interruptedNewRestoreLeavesNoPartialFile() {
+    using namespace rb_research_lock;
+    const QByteArray cipher = committedSyntheticFixture();
+    QCOMPARE(cipher.size(), kFixtureSize);
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString source = tmp.filePath(QStringLiteral("encrypted-only.rbt"));
+    const QString destination = tmp.filePath(QStringLiteral("new-restore.txt"));
+    QVERIFY(saveProtectedCopy(source, cipher));
+    QVERIFY(!QFile::exists(destination));
+
+    auto x = researchRestoreAtomically(
+        cipher, QByteArray(kSyntheticPassword), source, destination,
+        LockPolicy::Strict, LockAttempt::Succeeded, false,
+        RestoreFault::CancelAfterPartialWrite);
+    QCOMPARE(x.state, RestoreState::StorageFailed);
+    QVERIFY(!QFile::exists(destination));
+
+    x = researchRestoreAtomically(
+        cipher, QByteArray(kSyntheticPassword), source, destination,
+        LockPolicy::Strict, LockAttempt::Succeeded, false);
+    QCOMPARE(x.state, RestoreState::Written);
+    QFile out(destination);
+    QVERIFY(out.open(QIODevice::ReadOnly));
+    QCOMPARE(out.readAll(), QByteArray(kSyntheticPlain));
   }
 
   void hostileMetadataRefusedBeforeAnyArgon2idWork() {
