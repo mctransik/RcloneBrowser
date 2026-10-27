@@ -264,6 +264,15 @@ if(RB_BUILD_TESTS)
                               RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
         add_test(NAME portable_windows_handle_pinning
                  COMMAND test_portable_windows_handle_pinning)
+        # Native RootDirectory relative-open probe; test-only, never packaged.
+        add_executable(test_portable_windows_native_relative
+                       ../tests/test_portable_windows_native_relative.cpp)
+        target_link_libraries(test_portable_windows_native_relative PRIVATE
+                              Qt::Core Qt::Test)
+        set_target_properties(test_portable_windows_native_relative PROPERTIES
+                              RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+        add_test(NAME portable_windows_native_relative
+                 COMMAND test_portable_windows_native_relative)
       endif()
 
       # Separate research-only guarded-memory lifetime tests. This executable
