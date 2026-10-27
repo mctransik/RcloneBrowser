@@ -244,6 +244,19 @@ if(RB_BUILD_TESTS)
       endif()
       add_test(NAME portable_independent_recovery COMMAND test_portable_independent_recovery)
 
+      # Windows-only native API research: actual disposable NTFS junctions,
+      # opened handle file IDs, and conservative reparse-attribute rejection.
+      # Test-only target: NO install/package or application linkage.
+      if(WIN32)
+        add_executable(test_portable_windows_reparse
+                       ../tests/test_portable_windows_reparse.cpp)
+        target_link_libraries(test_portable_windows_reparse PRIVATE
+                              Qt::Core Qt::Test)
+        set_target_properties(test_portable_windows_reparse PROPERTIES
+                              RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+        add_test(NAME portable_windows_reparse COMMAND test_portable_windows_reparse)
+      endif()
+
       # Separate research-only guarded-memory lifetime tests. This executable
       # never links into the application and has NO install/package rule.
       add_executable(test_portable_guarded_key
