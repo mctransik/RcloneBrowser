@@ -180,6 +180,60 @@ struct RestoreOutcome {
   bool degraded;
 };
 
+// Negative-filter RESEARCH PROTOTYPE. These path checks are intentionally
+// conservative and do NOT replace platform-specific, handle-relative secure
+// opens, file identity tracking or defense against races after the last check.
+bool containsExplicitDotSegment(const QString &path) {
+  const QString normalizedSeparators = QDir::fromNativeSeparators(path);
+  const QStringList parts = normalizedSeparators.split(
+      QLatin1Char('/'), Qt::SkipEmptyParts);
+  return parts.contains(QStringLiteral(".")) ||
+         parts.contains(QStringLiteral(".."));
+}
+
+bool hasUntrustedAncestor(const QString &path) {
+  // Walk lexical parents without resolving symbolic links first; otherwise
+  // canonicalization would hide the very link we need to reject.
+  QString parent = QFileInfo(path).absolutePath();
+  for (int n = 0; n < 128; ++n) {
+    const QFileInfo info(parent);
+    if (!info.exists() || !info.isDir() || info.isSymLink())
+      return true;
+    const QString next = info.absolutePath();
+    if (next == parent)
+      return false; // reached the filesystem root
+    parent = next;
+  }
+  return true; // unexpected depth: fail closed, not an infinite loop
+}
+
+bool researchPathsAcceptable(const QString &sourceEncryptedPath,
+                             const QString &destinationPath) {
+  if (sourceEncryptedPath.isEmpty() || destinationPath.isEmpty() ||
+      containsExplicitDotSegment(sourceEncryptedPath) ||
+      containsExplicitDotSegment(destinationPath))
+    return false;
+
+  const QFileInfo source(sourceEncryptedPath), destination(destinationPath);
+  // Refuse symlinks first, including a dangling destination symlink.
+  // Qt isSymLink behavior varies for Windows junctions/reparse points:
+  // this fixture is NOT a complete Windows reparse-point defense.
+  if (source.isSymLink() || destination.isSymLink() ||
+      !source.exists() || !source.isFile() ||
+      (destination.exists() && !destination.isFile()) ||
+      hasUntrustedAncestor(sourceEncryptedPath) ||
+      hasUntrustedAncestor(destinationPath))
+    return false;
+
+  const QString canonicalSource = source.canonicalFilePath();
+  if (canonicalSource.isEmpty() ||
+      source.absoluteFilePath() == destination.absoluteFilePath())
+    return false;
+  const QString canonicalDestination = destination.canonicalFilePath();
+  return canonicalDestination.isEmpty() ||
+         canonicalSource != canonicalDestination;
+}
+
 RestoreOutcome researchRestoreAtomically(
     const QByteArray &encryptedBytes, const QByteArray &password,
     const QString &sourceEncryptedPath, const QString &destinationPath,
@@ -187,16 +241,9 @@ RestoreOutcome researchRestoreAtomically(
     rb_research_lock::LockAttempt lockAttempt,
     bool explicitDegradedConsent,
     RestoreFault simulatedFault = RestoreFault::None) {
-  const QFileInfo source(sourceEncryptedPath), destination(destinationPath);
-  // This small test-only safeguard prevents overwriting the encrypted
-  // source through identical paths or obvious aliases. Full production
-  // path/symlink/race-hardening remains UNIMPLEMENTED.
-  const QString canonicalSource = source.canonicalFilePath();
-  if (!source.exists() || canonicalSource.isEmpty() ||
-      destinationPath.isEmpty() ||
-      source.absoluteFilePath() == destination.absoluteFilePath() ||
-      (!destination.canonicalFilePath().isEmpty() &&
-       canonicalSource == destination.canonicalFilePath()))
+  // Early lexical and filesystem checks before any expensive KDF work.
+  // This is only a deterministic filter, not an atomic validation.
+  if (!researchPathsAcceptable(sourceEncryptedPath, destinationPath))
     return {RestoreState::UnsafeTarget, false};
 
   const auto decision = rb_research_lock::evaluate(
@@ -213,6 +260,12 @@ RestoreOutcome researchRestoreAtomically(
   // With direct-write fallback *disabled*, a failure cannot quietly write
   // straight into the old destination. Atomic replacement is QSaveFile's
   // intended contract, but does not prove power-loss durability on every FS.
+  // Recheck before staging, but acknowledge the irreducible TOCTOU gap:
+  // a malicious actor may change paths immediately AFTER this second check.
+  // Real implementation must use OS-specific directory handles/no-follow
+  // semantics, permissions and revalidation of opened file identities.
+  if (!researchPathsAcceptable(sourceEncryptedPath, destinationPath))
+    return {RestoreState::UnsafeTarget, decision.degraded};
   QSaveFile output(destinationPath);
   output.setDirectWriteFallback(false);
   if (!output.open(QIODevice::WriteOnly))
@@ -462,6 +515,118 @@ private slots:
     QFile out(destination);
     QVERIFY(out.open(QIODevice::ReadOnly));
     QCOMPARE(out.readAll(), QByteArray(kSyntheticPlain));
+  }
+
+
+  void unsafeRestorePathsRejectBeforeArgon2idAndPreserveProtectedFile() {
+    using namespace rb_research_lock;
+    const QByteArray cipher = committedSyntheticFixture();
+    QCOMPARE(cipher.size(), kFixtureSize);
+    QTemporaryDir sandbox;
+    QVERIFY(sandbox.isValid());
+    const QString source = sandbox.filePath(QStringLiteral("source.rbt"));
+    const QString oldTarget = sandbox.filePath(QStringLiteral("existing.txt"));
+    QVERIFY(saveProtectedCopy(source, cipher));
+    const QByteArray oldBytes("PUBLIC EXISTING TEST OUTPUT");
+    QVERIFY(saveProtectedCopy(oldTarget, oldBytes));
+    const QString nested = sandbox.filePath(QStringLiteral("subdir"));
+    QVERIFY(QDir().mkpath(nested));
+    const unsigned int priorKdf = kdfCalls;
+
+    const QStringList forbiddenTargets{
+        source, // original ciphertext may NEVER be replaced
+        sandbox.path(), // existing directory is not a regular file
+        sandbox.filePath(QStringLiteral("does-not-exist/target.txt")),
+        sandbox.filePath(QStringLiteral("subdir/../existing.txt")),
+        QString() // empty destination
+    };
+    for (const QString &target : forbiddenTargets) {
+      const auto outcome = researchRestoreAtomically(
+          cipher, QByteArray(kSyntheticPassword), source, target,
+          LockPolicy::Strict, LockAttempt::Succeeded, false);
+      QCOMPARE(outcome.state, RestoreState::UnsafeTarget);
+      QCOMPARE(kdfCalls, priorKdf);
+    }
+
+    const QString dotSource = sandbox.filePath(
+        QStringLiteral("subdir/../source.rbt"));
+    const auto badSource = researchRestoreAtomically(
+        cipher, QByteArray(kSyntheticPassword), dotSource, oldTarget,
+        LockPolicy::Strict, LockAttempt::Succeeded, false);
+    QCOMPARE(badSource.state, RestoreState::UnsafeTarget);
+    QCOMPARE(kdfCalls, priorKdf);
+
+    QFile oldFile(oldTarget), sourceFile(source);
+    QVERIFY(oldFile.open(QIODevice::ReadOnly));
+    QCOMPARE(oldFile.readAll(), oldBytes);
+    QVERIFY(sourceFile.open(QIODevice::ReadOnly));
+    QCOMPARE(sourceFile.readAll(), cipher);
+  }
+
+  void existingOrdinaryTargetAndNewTargetAreAcceptedByPathFilter() {
+    const QByteArray cipher = committedSyntheticFixture();
+    QCOMPARE(cipher.size(), kFixtureSize);
+    QTemporaryDir sandbox;
+    QVERIFY(sandbox.isValid());
+    const QString source = sandbox.filePath(QStringLiteral("source.rbt"));
+    const QString existing = sandbox.filePath(QStringLiteral("existing.txt"));
+    const QString fresh = sandbox.filePath(QStringLiteral("fresh.txt"));
+    QVERIFY(saveProtectedCopy(source, cipher));
+    QVERIFY(saveProtectedCopy(existing, QByteArray("PUBLIC PREVIOUS OUTPUT")));
+    QVERIFY(researchPathsAcceptable(source, existing));
+    QVERIFY(researchPathsAcceptable(source, fresh));
+    QVERIFY(!QFile::exists(fresh)); // preflight itself creates no plaintext
+    QFile original(source);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(original.readAll(), cipher);
+  }
+
+  void symbolicFileAndDirectoryLinksAreRejectedWhereSupported() {
+#ifdef Q_OS_WIN
+    // QFile::link creates a Windows .lnk shortcut, NOT necessarily an OS
+    // symbolic link or junction. Claiming that as a Windows symlink test
+    // would be misleading; platform-specific reparse tests remain needed.
+    QSKIP("OS reparse-point testing requires Windows-native APIs");
+#else
+    using namespace rb_research_lock;
+    const QByteArray cipher = committedSyntheticFixture();
+    QCOMPARE(cipher.size(), kFixtureSize);
+    QTemporaryDir sandbox;
+    QVERIFY(sandbox.isValid());
+    const QString source = sandbox.filePath(QStringLiteral("source.rbt"));
+    QVERIFY(saveProtectedCopy(source, cipher));
+    const QString realDir = sandbox.filePath(QStringLiteral("real-target-dir"));
+    QVERIFY(QDir().mkpath(realDir));
+    const QString linkToSource = sandbox.filePath(QStringLiteral("cipher-link"));
+    const QString redirectingDir = sandbox.filePath(QStringLiteral("dir-link"));
+    if (!QFile::link(source, linkToSource) ||
+        !QFile::link(realDir, redirectingDir))
+      QSKIP("This runner does not allow creating POSIX symlinks");
+
+    const unsigned int prior = kdfCalls;
+    const auto attempt = [&](const QString &sourcePath,
+                             const QString &destinationPath) {
+      const auto outcome = researchRestoreAtomically(
+          cipher, QByteArray(kSyntheticPassword), sourcePath,
+          destinationPath, LockPolicy::Strict, LockAttempt::Succeeded, false);
+      QCOMPARE(outcome.state, RestoreState::UnsafeTarget);
+      QCOMPARE(kdfCalls, prior);
+    };
+    attempt(source, linkToSource); // existing symlinked output
+    attempt(linkToSource, sandbox.filePath(QStringLiteral("new-out.txt")));
+    attempt(source, redirectingDir + QStringLiteral("/redirected.txt"));
+
+    // Even a dangling symlink must not become an output location.
+    const QString dangling = sandbox.filePath(QStringLiteral("dangling"));
+    QVERIFY(QFile::link(sandbox.filePath(QStringLiteral("missing-file")),
+                        dangling));
+    attempt(source, dangling);
+
+    QFile original(source);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(original.readAll(), cipher);
+    QVERIFY(!QFile::exists(realDir + QStringLiteral("/redirected.txt")));
+#endif
   }
 
   void hostileMetadataRefusedBeforeAnyArgon2idWork() {
