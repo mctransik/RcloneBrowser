@@ -600,9 +600,12 @@ private slots:
     QVERIFY(QDir().mkpath(realDir));
     const QString linkToSource = sandbox.filePath(QStringLiteral("cipher-link"));
     const QString redirectingDir = sandbox.filePath(QStringLiteral("dir-link"));
-    if (!QFile::link(source, linkToSource) ||
-        !QFile::link(realDir, redirectingDir))
-      QSKIP("This runner does not allow creating POSIX symlinks");
+    // On POSIX this is a required security regression, never silently
+    // skipped just because the runner cannot create a test symlink.
+    QVERIFY2(QFile::link(source, linkToSource),
+             "POSIX test must create a symbolic link to source");
+    QVERIFY2(QFile::link(realDir, redirectingDir),
+             "POSIX test must create a symbolic link to a directory");
 
     const unsigned int prior = kdfCalls;
     const auto attempt = [&](const QString &sourcePath,
