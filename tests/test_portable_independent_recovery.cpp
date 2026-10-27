@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <QStringList>
 #include <QTemporaryDir>
 #include "portable_recovery_lock_policy.h"
 
