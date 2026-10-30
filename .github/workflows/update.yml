@@ -159,7 +159,12 @@ jobs:
             if exist build\Testing\Temporary\LastTest.log type build\Testing\Temporary\LastTest.log
             REM Diagnostic rerun of the isolated synthetic QtTest, no application data.
             REM The process exit code helps distinguish assertion vs early crash.
-            powershell -NoProfile -Command "& 'build/tests/test_portable_windows_native_relative.exe' '-o' '-,txt'; Write-Host ('Native QtTest process exit code: ' + $LASTEXITCODE); exit 0"
+            REM Persist QtTest diagnostics into a file in case stdout/stderr is empty.
+            powershell -NoProfile -Command "& 'build/tests/test_portable_windows_native_relative.exe' '-o' 'build/tests/native-relative-diagnostic.txt,txt'; Write-Host ('Native QtTest process exit code: ' + $LASTEXITCODE); exit 0"
+            if exist build\tests\native-relative-diagnostic.txt type build\tests\native-relative-diagnostic.txt
+            REM Record Qt DLL availability without modifying the test's result.
+            where Qt6Core.dll
+            where Qt6Test.dll
             if exist build\tests\proxy_credentials.xml type build\tests\proxy_credentials.xml
             exit /b 1
           )
