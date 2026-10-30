@@ -155,6 +155,8 @@ jobs:
           REM The tests use only disposable dummy proxy addresses.
           ctest --test-dir build --output-on-failure --verbose
           if errorlevel 1 (
+            REM Include the failing QtTest diagnostic from CTest's per-test log.
+            if exist build\Testing\Temporary\LastTest.log type build\Testing\Temporary\LastTest.log
             if exist build\tests\proxy_credentials.xml type build\tests\proxy_credentials.xml
             exit /b 1
           )
