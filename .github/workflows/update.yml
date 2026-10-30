@@ -157,6 +157,9 @@ jobs:
           if errorlevel 1 (
             REM Include the failing QtTest diagnostic from CTest's per-test log.
             if exist build\Testing\Temporary\LastTest.log type build\Testing\Temporary\LastTest.log
+            REM Diagnostic rerun of the isolated synthetic QtTest, no application data.
+            REM The process exit code helps distinguish assertion vs early crash.
+            powershell -NoProfile -Command "& 'build/tests/test_portable_windows_native_relative.exe' '-o' '-,txt'; Write-Host ('Native QtTest process exit code: ' + $LASTEXITCODE); exit 0"
             if exist build\tests\proxy_credentials.xml type build\tests\proxy_credentials.xml
             exit /b 1
           )
