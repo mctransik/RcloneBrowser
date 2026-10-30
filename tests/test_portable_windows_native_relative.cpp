@@ -55,6 +55,15 @@ class WindowsNativeRelativeResearch : public QObject {
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
     QVERIFY(pinned.valid());
 
+    // Replace the ancestor while ONLY the approved root is pinned. Opening
+    // the nested child first can prevent a Windows directory rename; the
+    // security property under test is traversal AFTER that path replacement.
+    QVERIFY2(root.rename("approved", "approved-moved"),
+             "Could not rename synthetic ancestor with root handle pinned");
+    QVERIFY(root.mkpath("approved/nested"));
+    QVERIFY(writeFixture(QDir(root.filePath("approved/nested")).filePath("marker.txt"),
+                         "REPLACEMENT-NESTED"));
+
     HMODULE dll = GetModuleHandleW(L"ntdll.dll");
     QVERIFY(dll != nullptr);
     auto nativeOpen = reinterpret_cast<NtCreateFileFn>(
@@ -92,12 +101,6 @@ class WindowsNativeRelativeResearch : public QObject {
                                         &tag, sizeof(tag)));
     QVERIFY2((tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0,
              "Nested component unexpectedly is a reparse point");
-
-    QVERIFY2(root.rename("approved", "approved-moved"),
-             "Could not rename synthetic ancestor while handles are open");
-    QVERIFY(root.mkpath("approved/nested"));
-    QVERIFY(writeFixture(QDir(root.filePath("approved/nested")).filePath("marker.txt"),
-                         "REPLACEMENT-NESTED"));
 
     wchar_t filename[] = L"marker.txt";
     UNICODE_STRING leaf{};
