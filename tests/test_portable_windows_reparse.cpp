@@ -6,6 +6,7 @@
 #endif
 #include <windows.h>
 #include <winioctl.h>
+#include <winternl.h>
 
 #include <QtTest>
 #include <QByteArray>
@@ -239,6 +240,91 @@ class TestPortableWindowsReparse final : public QObject {
     QFile preserved(targetFile);
     QVERIFY(preserved.open(QIODevice::ReadOnly));
     QCOMPARE(preserved.readAll(), sentinel);
+  }
+
+  void nativeRelativeIntermediateNtfsJunctionIsDenied() {
+    // A real junction is the *intermediate* component of a hypothetical
+    // approved/redirected-child/sentinel.txt restore destination. Only
+    // synthetic temporary files are used. We never open the leaf via link.
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString approved = temporary.filePath(QStringLiteral("approved"));
+    const QString target = temporary.filePath(QStringLiteral("outside-target"));
+    const QString redirect = approved + QStringLiteral("/redirected-child");
+    QVERIFY(QDir().mkpath(approved));
+    QVERIFY(QDir().mkpath(target));
+    QVERIFY(QDir().mkpath(redirect));
+    const QByteArray sentinel("OUTSIDE TARGET - DO NOT FOLLOW");
+    const QString targetFile = target + QStringLiteral("/sentinel.txt");
+    QVERIFY(writePublicBytes(targetFile, sentinel));
+
+    DWORD error = ERROR_SUCCESS;
+    QVERIFY2(createTemporaryNtfsJunction(redirect, target, &error),
+             qPrintable(QStringLiteral("Mandatory NTFS junction fixture failed, Win32 %1")
+                 .arg(error)));
+
+    // Pin approved root and inspect the actual opened object, not a
+    // pathname lookup or a QFileInfo-derived parent chain.
+    UniqueHandle root(openNoFollow(approved, FILE_TRAVERSE |
+                                              FILE_READ_ATTRIBUTES | SYNCHRONIZE));
+    QVERIFY2(root.valid(), "Cannot open synthetic approved directory");
+    ObservedObject rootInfo{};
+    QVERIFY(inspectOpened(root.get(), &rootInfo));
+    QVERIFY(!(rootInfo.attributes & FILE_ATTRIBUTE_REPARSE_POINT));
+
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    QVERIFY(ntdll != nullptr);
+    using NtCreateFileFn = NTSTATUS (NTAPI *)(PHANDLE, ACCESS_MASK,
+        POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, PLARGE_INTEGER,
+        ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+    auto ntCreateFile = reinterpret_cast<NtCreateFileFn>(
+        GetProcAddress(ntdll, "NtCreateFile"));
+    QVERIFY2(ntCreateFile != nullptr, "NtCreateFile not available");
+
+    wchar_t component[] = L"redirected-child"; // A single trusted fixture component.
+    UNICODE_STRING name{};
+    name.Buffer = component;
+    name.Length = USHORT((sizeof(component) / sizeof(wchar_t) - 1) * sizeof(wchar_t));
+    name.MaximumLength = USHORT(sizeof(component));
+    OBJECT_ATTRIBUTES attrs{};
+    attrs.Length = sizeof(attrs);
+    attrs.RootDirectory = root.get();
+    attrs.ObjectName = &name;
+    attrs.Attributes = OBJ_CASE_INSENSITIVE;
+    IO_STATUS_BLOCK ios{};
+    HANDLE raw = INVALID_HANDLE_VALUE;
+    constexpr ULONG kOpenExisting = 1;
+    constexpr ULONG kDirectoryOnly = 0x00000001;
+    constexpr ULONG kSynchronous = 0x00000020;
+    constexpr ULONG kOpenReparseItself = 0x00200000;
+    const NTSTATUS status = ntCreateFile(&raw,
+        FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
+        &attrs, &ios, nullptr, 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        kOpenExisting, kDirectoryOnly | kSynchronous | kOpenReparseItself,
+        nullptr, 0);
+    {
+      UniqueHandle child(raw);
+      QVERIFY2(status >= 0 && child.valid(),
+               qPrintable(QStringLiteral("Native no-follow junction open failed: NTSTATUS 0x%1")
+                 .arg(quint32(status), 8, 16, QLatin1Char('0'))));
+      ObservedObject observed{};
+      QVERIFY(inspectOpened(child.get(), &observed));
+      QVERIFY(observed.attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+      QCOMPARE(observed.tag, DWORD(IO_REPARSE_TAG_MOUNT_POINT));
+
+      // Fail closed: a restore walker MUST stop here and never open
+      // the hypothetical sentinel.txt under this intermediate component.
+      QVERIFY(candidateRejectReparse(observed));
+    }
+
+    QVERIFY(removeTemporaryJunction(redirect));
+    QVERIFY(QDir().rmdir(redirect));
+    QFile preserved(targetFile);
+    QVERIFY(preserved.open(QIODevice::ReadOnly));
+    QCOMPARE(preserved.readAll(), sentinel);
+    // This is a deterministic research fixture, NOT a complete secure
+    // directory resolver, write/commit algorithm or TOCTOU proof.
   }
 
   void openedHandleIdentitySurvivesPathReplacement() {
