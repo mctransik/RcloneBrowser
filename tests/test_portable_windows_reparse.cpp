@@ -327,6 +327,117 @@ class TestPortableWindowsReparse final : public QObject {
     // directory resolver, write/commit algorithm or TOCTOU proof.
   }
 
+  void checkedChildReplacedByJunctionMustBeRejectedOnUse() {
+    // Deterministic check-then-change-then-use fixture. No timing/scheduling
+    // races, user files, secrets, network shares or production restore writes.
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString approved = temporary.filePath(QStringLiteral("approved"));
+    const QString childPath = approved + QStringLiteral("/child");
+    const QString target = temporary.filePath(QStringLiteral("outside-target"));
+    const QString sentinelPath = target + QStringLiteral("/sentinel.txt");
+    QVERIFY(QDir().mkpath(childPath));
+    QVERIFY(QDir().mkpath(target));
+    const QByteArray sentinel("EXTERNAL PUBLIC SENTINEL UNCHANGED");
+    QVERIFY(writePublicBytes(sentinelPath, sentinel));
+
+    // Keep only the approved root handle open during namespace replacement.
+    // The inspected child handle is deliberately closed before the swap,
+    // modeling a stale validation result that must NOT authorize later use.
+    UniqueHandle root(openNoFollow(approved, FILE_TRAVERSE |
+                                            FILE_READ_ATTRIBUTES | SYNCHRONIZE));
+    QVERIFY(root.valid());
+    ObservedObject rootIdentity{};
+    QVERIFY(inspectOpened(root.get(), &rootIdentity));
+    QVERIFY(!candidateRejectReparse(rootIdentity));
+
+    HMODULE module = GetModuleHandleW(L"ntdll.dll");
+    QVERIFY(module != nullptr);
+    using NtCreateFileFn = NTSTATUS (NTAPI *)(PHANDLE, ACCESS_MASK,
+        POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, PLARGE_INTEGER,
+        ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+    auto ntCreateFile = reinterpret_cast<NtCreateFileFn>(
+        GetProcAddress(module, "NtCreateFile"));
+    QVERIFY2(ntCreateFile != nullptr, "NtCreateFile missing");
+
+    wchar_t childName[] = L"child"; // One synthetic component, no path separators.
+    UNICODE_STRING component{};
+    component.Buffer = childName;
+    component.Length = USHORT((sizeof(childName) / sizeof(wchar_t) - 1)
+                              * sizeof(wchar_t));
+    component.MaximumLength = USHORT(sizeof(childName));
+    OBJECT_ATTRIBUTES attributes{};
+    attributes.Length = sizeof(attributes);
+    attributes.RootDirectory = root.get();
+    attributes.ObjectName = &component;
+    attributes.Attributes = OBJ_CASE_INSENSITIVE;
+
+    constexpr ULONG kFileOpen = 1;
+    constexpr ULONG kDirectoryOnly = 0x00000001;
+    constexpr ULONG kSynchronousNonalert = 0x00000020;
+    constexpr ULONG kOpenReparsePoint = 0x00200000;
+    auto openChildNoFollow = [&](HANDLE *out) -> NTSTATUS {
+      *out = INVALID_HANDLE_VALUE;
+      IO_STATUS_BLOCK io{};
+      return ntCreateFile(out, FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
+          &attributes, &io, nullptr, 0,
+          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+          kFileOpen, kDirectoryOnly | kSynchronousNonalert | kOpenReparsePoint,
+          nullptr, 0);
+    };
+
+    ObservedObject checked{};
+    {
+      HANDLE raw = INVALID_HANDLE_VALUE;
+      const NTSTATUS status = openChildNoFollow(&raw);
+      UniqueHandle child(raw);
+      QVERIFY2(status >= 0 && child.valid(),
+               "Initial relative child inspection failed");
+      QVERIFY(inspectOpened(child.get(), &checked));
+      QVERIFY(!candidateRejectReparse(checked));
+      QVERIFY(checked.attributes & FILE_ATTRIBUTE_DIRECTORY);
+    }  // Close child before rename; a pinned child may prevent the rename.
+
+    // The attacker-controlled name now resolves to a genuine NTFS junction,
+    // but the approved root handle and old checked child still existed.
+    QDir approvedDir(approved);
+    QVERIFY2(approvedDir.rename(QStringLiteral("child"),
+                                QStringLiteral("child-moved")),
+             "Could not replace disposable child after initial inspection");
+    QVERIFY(QDir().mkpath(childPath));
+    DWORD winError = ERROR_SUCCESS;
+    QVERIFY2(createTemporaryNtfsJunction(childPath, target, &winError),
+             qPrintable(QStringLiteral("Mandatory junction creation failed, Win32 %1")
+                .arg(winError)));
+
+    HANDLE changedRaw = INVALID_HANDLE_VALUE;
+    const NTSTATUS changedStatus = openChildNoFollow(&changedRaw);
+    {
+      UniqueHandle changed(changedRaw);
+      QVERIFY2(changedStatus >= 0 && changed.valid(),
+               "Failed to inspect replaced child via pinned parent handle");
+      ObservedObject used{};
+      QVERIFY(inspectOpened(changed.get(), &used));
+      QVERIFY(!sameOpenedIdentity(checked, used));
+      QVERIFY(used.attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+      QCOMPARE(used.tag, DWORD(IO_REPARSE_TAG_MOUNT_POINT));
+      // The earlier 'safe' result is stale. Never traverse this component
+      // or open its leaf: the CURRENT opened object must be denied.
+      QVERIFY(candidateRejectReparse(used));
+    }
+
+    ObservedObject stillRoot{};
+    QVERIFY(inspectOpened(root.get(), &stillRoot));
+    QVERIFY(sameOpenedIdentity(rootIdentity, stillRoot));
+    QVERIFY(removeTemporaryJunction(childPath));
+    QVERIFY(QDir().rmdir(childPath));
+    QFile preserved(sentinelPath);
+    QVERIFY(preserved.open(QIODevice::ReadOnly));
+    QCOMPARE(preserved.readAll(), sentinel);
+    // This fixture exercises deterministic post-check substitution only.
+    // It is NOT an asynchronous race test or a secure restore implementation.
+  }
+
   void openedHandleIdentitySurvivesPathReplacement() {
     QTemporaryDir root;
     QVERIFY(root.isValid());
