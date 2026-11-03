@@ -72,29 +72,61 @@ bool sameOwnerAndDacl(const SecuritySnapshot& first,
          std::memcmp(aclFirst, aclSecond, aclFirst->AclSize) == 0;
 }
 
-// Exploratory NO-REPLACE rename using a pinned target directory and an
-// already-open source file. Only a *single trusted synthetic leaf* is used.
-// Neither atomic replace-existing nor a secure restore transaction is proven.
+// Exploratory NO-REPLACE rename using the native FileRenameInformation
+// contract (class 10) with a pinned target directory. The Win32
+// SetFileInformationByHandle(FileRenameInfo) form with non-null RootDirectory
+// returned Win32 87 on the CI runner; do not silently fall back to a
+// pathname-based rename. Native NTSTATUS is surfaced for diagnostics.
+// This is research-only and NOT a production-supported restore API.
 bool renameOpenFileIntoPinnedDir(HANDLE source, HANDLE parent,
-                                 const wchar_t* leaf, DWORD* error) {
-  const size_t nameChars = std::wcslen(leaf);
-  if (!nameChars || nameChars > 128) {
-    if (error) *error = ERROR_INVALID_NAME;
+                                 const wchar_t* leaf, NTSTATUS* result) {
+  constexpr NTSTATUS kBadParameter = NTSTATUS(0xC000000DL);
+  if (result) *result = kBadParameter;
+  if (!source || source == INVALID_HANDLE_VALUE ||
+      !parent || parent == INVALID_HANDLE_VALUE || !leaf)
     return false;
-  }
-  const size_t size = offsetof(FILE_RENAME_INFO, FileName) +
+  const size_t nameChars = std::wcslen(leaf);
+  if (!nameChars || nameChars > 128 ||
+      std::wcschr(leaf, L'\\') || std::wcschr(leaf, L'/') ||
+      (nameChars == 1 && leaf[0] == L'.') ||
+      (nameChars == 2 && leaf[0] == L'.' && leaf[1] == L'.'))
+    return false;
+
+  struct NativeRenameInfo {
+    BOOLEAN replaceIfExists;
+    HANDLE rootDirectory;
+    ULONG fileNameLength;
+    WCHAR fileName[1];
+  };
+  static_assert(offsetof(NativeRenameInfo, fileName) ==
+                offsetof(FILE_RENAME_INFO, FileName),
+                "Unexpected native rename structure layout");
+  const size_t size = offsetof(NativeRenameInfo, fileName) +
                       (nameChars + 1) * sizeof(wchar_t);
   std::vector<ULONG_PTR> aligned((size + sizeof(ULONG_PTR) - 1) /
                                  sizeof(ULONG_PTR), 0);
-  auto* info = reinterpret_cast<FILE_RENAME_INFO*>(aligned.data());
-  info->ReplaceIfExists = FALSE;
-  info->RootDirectory = parent;
-  info->FileNameLength = DWORD(nameChars * sizeof(wchar_t));
-  std::memcpy(info->FileName, leaf, (nameChars + 1) * sizeof(wchar_t));
-  const BOOL ok = SetFileInformationByHandle(source, FileRenameInfo,
-                                              info, DWORD(size));
-  if (error) *error = ok ? ERROR_SUCCESS : GetLastError();
-  return ok != FALSE;
+  auto* info = reinterpret_cast<NativeRenameInfo*>(aligned.data());
+  info->replaceIfExists = FALSE;
+  info->rootDirectory = parent;
+  info->fileNameLength = ULONG(nameChars * sizeof(wchar_t));
+  std::memcpy(info->fileName, leaf, (nameChars + 1) * sizeof(wchar_t));
+
+  HMODULE module = GetModuleHandleW(L"ntdll.dll");
+  if (!module)
+    return false;
+  using NtSetInformationFileFn = NTSTATUS (NTAPI *)(
+      HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
+  auto nativeSetInfo = reinterpret_cast<NtSetInformationFileFn>(
+      GetProcAddress(module, "NtSetInformationFile"));
+  if (!nativeSetInfo)
+    return false;
+  IO_STATUS_BLOCK io{};
+  // FileRenameInformation is native class 10, NOT Win32 FileRenameInfo 3.
+  constexpr auto kNativeRenameClass = static_cast<FILE_INFORMATION_CLASS>(10);
+  const NTSTATUS status = nativeSetInfo(source, &io, info, ULONG(size),
+                                         kNativeRenameClass);
+  if (result) *result = status;
+  return status >= 0;
 }
 
 bool writeFixture(const QString& path, const QByteArray& bytes) {
@@ -167,11 +199,12 @@ class WindowsNativeRelativeResearch : public QObject {
     QVERIFY2(aclBefore.capture(source.get()),
              "Cannot inspect staging owner/DACL by handle; fail closed");
 
-    DWORD error = ERROR_SUCCESS;
+    NTSTATUS renameStatus = 0;
     const bool renamed = renameOpenFileIntoPinnedDir(
-        source.get(), parent.get(), L"published.txt", &error);
+        source.get(), parent.get(), L"published.txt", &renameStatus);
     QVERIFY2(renamed, qPrintable(QStringLiteral(
-        "Handle-relative no-replace rename failed, Win32 %1").arg(error)));
+        "Native handle-relative rename failed, NTSTATUS 0x%1")
+        .arg(quint32(renameStatus), 8, 16, QLatin1Char('0'))));
 
     QVERIFY(GetFileInformationByHandle(source.get(), &fileAfter));
     QVERIFY(GetFileInformationByHandle(parent.get(), &pinnedAfter));
@@ -211,8 +244,10 @@ class WindowsNativeRelativeResearch : public QObject {
         nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
     QVERIFY(blockedSource.valid());
     const bool replacedExisting = renameOpenFileIntoPinnedDir(
-        blockedSource.get(), parent.get(), L"occupied.txt", &error);
+        blockedSource.get(), parent.get(), L"occupied.txt", &renameStatus);
     QVERIFY2(!replacedExisting, "No-replace rename overwrote existing file");
+    QVERIFY2(renameStatus < 0,
+             "No-replace existing-target failure did not report NTSTATUS error");
     QFile occupiedRead(occupied), blockedRead(blocked);
     QVERIFY(occupiedRead.open(QIODevice::ReadOnly));
     QCOMPARE(occupiedRead.readAll(), occupiedBytes);
