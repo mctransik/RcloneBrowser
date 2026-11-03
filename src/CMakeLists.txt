@@ -268,7 +268,7 @@ if(RB_BUILD_TESTS)
         add_executable(test_portable_windows_native_relative
                        ../tests/test_portable_windows_native_relative.cpp)
         target_link_libraries(test_portable_windows_native_relative PRIVATE
-                              Qt::Core Qt::Test)
+                              Qt::Core Qt::Test Advapi32)
         set_target_properties(test_portable_windows_native_relative PROPERTIES
                               RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
         add_test(NAME portable_windows_native_relative
