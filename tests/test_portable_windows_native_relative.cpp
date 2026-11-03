@@ -75,8 +75,9 @@ class WindowsNativeRelativeResearch : public QObject {
 
     QFile published(target), preservedOutside(outside);
     QVERIFY(published.open(QIODevice::ReadOnly));
-    QCOMPARE(published.readAll(), verified);
-    QCOMPARE(QCryptographicHash::hash(verified, QCryptographicHash::Sha256),
+    const QByteArray publishedBytes = published.readAll();
+    QCOMPARE(publishedBytes, verified);
+    QCOMPARE(QCryptographicHash::hash(publishedBytes, QCryptographicHash::Sha256),
              expectedSha256);
     QVERIFY(preservedOutside.open(QIODevice::ReadOnly));
     QCOMPARE(preservedOutside.readAll(), outsideBytes);
