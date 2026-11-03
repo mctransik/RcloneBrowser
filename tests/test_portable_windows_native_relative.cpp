@@ -7,6 +7,7 @@
 #include <QtTest>
 #include <QDir>
 #include <QFile>
+#include <QCryptographicHash>
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QTemporaryDir>
@@ -41,6 +42,122 @@ QByteArray readHandle(HANDLE h) {
 class WindowsNativeRelativeResearch : public QObject {
   Q_OBJECT
  private slots:
+  void verifiedPayloadPublishesOnUnchangedSyntheticTarget() {
+    // This test validates a known, public fixture digest BEFORE staging.
+    // QSaveFile then publishes that data on a non-hostile, fixed test path.
+    // It does NOT prove that QSaveFile's pathname-based commit is safe from
+    // concurrent substitutions or that staged disk bytes are reverified.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir root(temp.path());
+    QVERIFY(root.mkdir("approved"));
+    QVERIFY(root.mkdir("outside"));
+    const QString target = root.filePath("approved/restored.txt");
+    const QString outside = root.filePath("outside/sentinel.txt");
+    const QByteArray oldBytes("PREVIOUS PUBLIC DATA");
+    const QByteArray outsideBytes("OUTSIDE PUBLIC SENTINEL");
+    const QByteArray verified("VERIFIED RESTORE CONTENT - RESEARCH ONLY");
+    const QByteArray expectedSha256 = QByteArray::fromHex(
+        "c158f24b5d37bf6e815b7eefbcc23f92077ae370a658ae23193d7dc9d864cb57");
+    QVERIFY(writeFixture(target, oldBytes));
+    QVERIFY(writeFixture(outside, outsideBytes));
+    QCOMPARE(QCryptographicHash::hash(verified, QCryptographicHash::Sha256),
+             expectedSha256);
+
+    {
+      QSaveFile staging(target);
+      staging.setDirectWriteFallback(false);
+      QVERIFY2(staging.open(QIODevice::WriteOnly), "Staging file not created");
+      QCOMPARE(staging.write(verified), qint64(verified.size()));
+      QVERIFY(staging.flush());
+      QVERIFY2(staging.commit(), "Uncontended fixture commit failed");
+    }
+
+    QFile published(target), preservedOutside(outside);
+    QVERIFY(published.open(QIODevice::ReadOnly));
+    QCOMPARE(published.readAll(), verified);
+    QCOMPARE(QCryptographicHash::hash(verified, QCryptographicHash::Sha256),
+             expectedSha256);
+    QVERIFY(preservedOutside.open(QIODevice::ReadOnly));
+    QCOMPARE(preservedOutside.readAll(), outsideBytes);
+    // Only an uncontended Qt staging/commit smoke test; no production restore.
+  }
+
+  void swappedDestinationIdentityCancelsVerifiedStaging() {
+    // A previously checked target file can be swapped before QSaveFile
+    // commits: a stale path lookup MUST NOT authorize replacement. This
+    // research test detects the substitution and cancels staging; it does
+    // NOT implement an atomic compare-and-swap commit.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir root(temp.path());
+    QVERIFY(root.mkdir("approved"));
+    QVERIFY(root.mkdir("outside"));
+    const QString target = root.filePath("approved/restored.txt");
+    const QString previous = root.filePath("approved/previous.txt");
+    const QString outside = root.filePath("outside/sentinel.txt");
+    const QByteArray oldBytes("ORIGINAL VERIFIED PUBLIC FILE");
+    const QByteArray swappedBytes("SIMULATED EXTERNAL REPLACEMENT");
+    const QByteArray outsideBytes("OUTSIDE UNCHANGED");
+    const QByteArray stagedBytes("VERIFIED RESTORE CONTENT - RESEARCH ONLY");
+    QVERIFY(writeFixture(target, oldBytes));
+    QVERIFY(writeFixture(outside, outsideBytes));
+
+    auto inspectNoFollow = [](const QString &path,
+                              BY_HANDLE_FILE_INFORMATION *identity,
+                              FILE_ATTRIBUTE_TAG_INFO *tag) -> bool {
+      Handle opened(CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()),
+          FILE_READ_ATTRIBUTES,
+          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+          nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+      return opened.valid() &&
+          GetFileInformationByHandle(opened.get(), identity) &&
+          GetFileInformationByHandleEx(opened.get(), FileAttributeTagInfo,
+                                     tag, sizeof(*tag));
+    };
+    BY_HANDLE_FILE_INFORMATION originalIdentity{}, replacedIdentity{};
+    FILE_ATTRIBUTE_TAG_INFO originalTag{}, replacedTag{};
+    QVERIFY(inspectNoFollow(target, &originalIdentity, &originalTag));
+    QVERIFY(!(originalTag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT));
+
+    QSaveFile staging(target);
+    staging.setDirectWriteFallback(false);
+    QVERIFY(staging.open(QIODevice::WriteOnly));
+    QCOMPARE(staging.write(stagedBytes), qint64(stagedBytes.size()));
+    QVERIFY(staging.flush());
+
+    // Deterministic substitution immediately before the planned commit.
+    // Leave no target inspection handle open while renaming on Windows.
+    QVERIFY2(root.rename("approved/restored.txt", "approved/previous.txt"),
+             "Synthetic target could not be renamed after staging");
+    QVERIFY(writeFixture(target, swappedBytes));
+    QVERIFY(inspectNoFollow(target, &replacedIdentity, &replacedTag));
+    const bool sameIdentity =
+        originalIdentity.dwVolumeSerialNumber == replacedIdentity.dwVolumeSerialNumber &&
+        originalIdentity.nFileIndexHigh == replacedIdentity.nFileIndexHigh &&
+        originalIdentity.nFileIndexLow == replacedIdentity.nFileIndexLow;
+    QVERIFY2(!sameIdentity, "Path replacement was not detected by file identity");
+    QVERIFY(!(replacedTag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT));
+
+    // A candidate restore policy aborts whenever its target's identity
+    // changes. Never call commit() successfully after such a mismatch.
+    staging.cancelWriting();
+    QVERIFY2(!staging.commit(), "Cancelled staging unexpectedly published data");
+
+    QFile current(target), original(previous), untouched(outside);
+    QVERIFY(current.open(QIODevice::ReadOnly));
+    QCOMPARE(current.readAll(), swappedBytes);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(original.readAll(), oldBytes);
+    QVERIFY(untouched.open(QIODevice::ReadOnly));
+    QCOMPARE(untouched.readAll(), outsideBytes);
+    const QStringList names = QDir(root.filePath("approved")).entryList(
+        QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDir::Name);
+    QCOMPARE(names, (QStringList{"previous.txt", "restored.txt"}));
+    // TOCTOU still exists BETWEEN this identity check and any path-based
+    // commit. Do not integrate QSaveFile as a handle-bound secure restore.
+  }
+
   void missingRelativeLeafFailsClosedAndRecoveryWorks() {
     // Isolated error-path fixture. FILE_OPEN must never create a missing
     // child or silently redirect an operation to a sibling/other directory.
