@@ -7,6 +7,8 @@
 #include <QtTest>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
 #include <QTemporaryDir>
 
 namespace {
@@ -39,6 +41,137 @@ QByteArray readHandle(HANDLE h) {
 class WindowsNativeRelativeResearch : public QObject {
   Q_OBJECT
  private slots:
+  void missingRelativeLeafFailsClosedAndRecoveryWorks() {
+    // Isolated error-path fixture. FILE_OPEN must never create a missing
+    // child or silently redirect an operation to a sibling/other directory.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir root(temp.path());
+    QVERIFY(root.mkdir("approved"));
+    QVERIFY(root.mkdir("outside"));
+    const QString approved = root.filePath("approved");
+    const QString outside = root.filePath("outside");
+    const QString safeFile = QDir(approved).filePath("safe.txt");
+    const QString outsideFile = QDir(outside).filePath("sentinel.txt");
+    const QByteArray safeBytes("SAFE PUBLIC BYTES");
+    const QByteArray outsideBytes("OUTSIDE UNCHANGED");
+    QVERIFY(writeFixture(safeFile, safeBytes));
+    QVERIFY(writeFixture(outsideFile, outsideBytes));
+
+    Handle parent(CreateFileW(reinterpret_cast<LPCWSTR>(approved.utf16()),
+        FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    QVERIFY2(parent.valid(), "Could not pin disposable approved directory");
+
+    HMODULE dll = GetModuleHandleW(L"ntdll.dll");
+    QVERIFY(dll != nullptr);
+    auto nativeOpen = reinterpret_cast<NtCreateFileFn>(
+        GetProcAddress(dll, "NtCreateFile"));
+    QVERIFY(nativeOpen != nullptr);
+
+    wchar_t missingName[] = L"missing.txt";
+    UNICODE_STRING name{};
+    name.Buffer = missingName;
+    name.Length = USHORT((sizeof(missingName) / sizeof(wchar_t) - 1)
+                          * sizeof(wchar_t));
+    name.MaximumLength = USHORT(sizeof(missingName));
+    OBJECT_ATTRIBUTES attributes{};
+    attributes.Length = sizeof(attributes);
+    attributes.RootDirectory = parent.get();
+    attributes.ObjectName = &name;
+    attributes.Attributes = OBJ_CASE_INSENSITIVE;
+    constexpr ULONG kFileOpen = 1;
+    constexpr ULONG kSynchronous = 0x20;
+    constexpr ULONG kNonDirectory = 0x40;
+    constexpr ULONG kNoFollow = 0x00200000;
+
+    IO_STATUS_BLOCK missingIos{};
+    HANDLE missingRaw = INVALID_HANDLE_VALUE;
+    const NTSTATUS missingStatus = nativeOpen(&missingRaw,
+        FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        &attributes, &missingIos, nullptr, 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        kFileOpen, kSynchronous | kNonDirectory | kNoFollow, nullptr, 0);
+    {
+      Handle failed(missingRaw);
+      QVERIFY2(missingStatus < 0,
+               "Missing leaf was unexpectedly opened rather than rejected");
+      QVERIFY2(!failed.valid(), "Failed lookup returned a valid file handle");
+    }
+    QVERIFY(!QFileInfo::exists(QDir(approved).filePath("missing.txt")));
+
+    // An unrelated subsequent valid open must still work against the SAME
+    // pinned parent handle; failure must not poison or redirect it.
+    wchar_t safeName[] = L"safe.txt";
+    name.Buffer = safeName;
+    name.Length = USHORT((sizeof(safeName) / sizeof(wchar_t) - 1)
+                          * sizeof(wchar_t));
+    name.MaximumLength = USHORT(sizeof(safeName));
+    IO_STATUS_BLOCK safeIos{};
+    HANDLE safeRaw = INVALID_HANDLE_VALUE;
+    const NTSTATUS safeStatus = nativeOpen(&safeRaw,
+        FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        &attributes, &safeIos, nullptr, 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        kFileOpen, kSynchronous | kNonDirectory | kNoFollow, nullptr, 0);
+    Handle safe(safeRaw);
+    QVERIFY2(safeStatus >= 0 && safe.valid(),
+             "Valid relative file could not be opened after earlier failure");
+    QCOMPARE(readHandle(safe.get()), safeBytes);
+    QFile external(outsideFile);
+    QVERIFY(external.open(QIODevice::ReadOnly));
+    QCOMPARE(external.readAll(), outsideBytes);
+    // No production writes or fail-safe restore behavior are claimed here.
+  }
+
+  void cancelledStagingLeavesNoPublishedPartialFile() {
+    // Research-only synthetic crash/abort injection with QSaveFile: a
+    // partial staging write must never be published. This is NOT a proof
+    // of atomic restore durability, secure path resolution or ACL safety.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir root(temp.path());
+    QVERIFY(root.mkdir("approved"));
+    QVERIFY(root.mkdir("outside"));
+    const QString approved = root.filePath("approved");
+    const QString existingFile = QDir(approved).filePath("restored.txt");
+    const QString newFile = QDir(approved).filePath("new-restore.txt");
+    const QString sentinelFile = root.filePath("outside/sentinel.txt");
+    const QByteArray previousBytes("PREVIOUS VERIFIED PUBLIC DATA");
+    const QByteArray sentinelBytes("OUTSIDE MUST REMAIN UNCHANGED");
+    QVERIFY(writeFixture(existingFile, previousBytes));
+    QVERIFY(writeFixture(sentinelFile, sentinelBytes));
+
+    for (const QString &destination : {existingFile, newFile}) {
+      const QStringList before = QDir(approved).entryList(
+          QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDir::Name);
+      const bool existedBefore = QFileInfo::exists(destination);
+      {
+        QSaveFile staging(destination);
+        QVERIFY2(staging.open(QIODevice::WriteOnly),
+                 "Could not create temporary staged test file");
+        const QByteArray partial("TRUNCATED INCOMPLETE CONTENT");
+        QCOMPARE(staging.write(partial), qint64(partial.size()));
+        // Simulate interruption before verification or publication.
+        staging.cancelWriting();
+        QVERIFY2(!staging.commit(),
+                 "A deliberately cancelled staging write was published");
+      }
+      QCOMPARE(QFileInfo::exists(destination), existedBefore);
+      QCOMPARE(QDir(approved).entryList(
+          QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDir::Name), before);
+      QFile existing(existingFile);
+      QVERIFY(existing.open(QIODevice::ReadOnly));
+      QCOMPARE(existing.readAll(), previousBytes);
+      QFile outside(sentinelFile);
+      QVERIFY(outside.open(QIODevice::ReadOnly));
+      QCOMPARE(outside.readAll(), sentinelBytes);
+    }
+    // QSaveFile behavior is verified independently of RcloneBrowser runtime.
+  }
+
   void nestedRelativeOpenDoesNotFollowReplacedAncestor() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
