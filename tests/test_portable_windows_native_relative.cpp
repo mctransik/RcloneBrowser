@@ -4,6 +4,11 @@
 #endif
 #include <windows.h>
 #include <winternl.h>
+#include <aclapi.h>
+#include <cstddef>
+#include <cstring>
+#include <cwchar>
+#include <vector>
 #include <QtTest>
 #include <QDir>
 #include <QFile>
@@ -26,6 +31,72 @@ class Handle {
 };
 using NtCreateFileFn = NTSTATUS (NTAPI *)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES,
     PIO_STATUS_BLOCK, PLARGE_INTEGER, ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+// Windows ACLs are read by handle, not by a pathname that could be replaced.
+struct SecuritySnapshot {
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  PSID owner = nullptr;
+  PACL dacl = nullptr;
+  SecuritySnapshot() = default;
+  SecuritySnapshot(const SecuritySnapshot&) = delete;
+  SecuritySnapshot& operator=(const SecuritySnapshot&) = delete;
+  ~SecuritySnapshot() { if (descriptor) LocalFree(descriptor); }
+
+  bool capture(HANDLE h) {
+    return GetSecurityInfo(h, SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        &owner, nullptr, &dacl, nullptr, &descriptor) == ERROR_SUCCESS;
+  }
+};
+
+bool sameOwnerAndDacl(const SecuritySnapshot& first,
+                      const SecuritySnapshot& second) {
+  if (!first.descriptor || !second.descriptor ||
+      !first.owner || !second.owner ||
+      !IsValidSid(first.owner) || !IsValidSid(second.owner) ||
+      !EqualSid(first.owner, second.owner))
+    return false;
+  BOOL presentFirst = FALSE, presentSecond = FALSE;
+  BOOL defaultedFirst = FALSE, defaultedSecond = FALSE;
+  PACL aclFirst = nullptr, aclSecond = nullptr;
+  if (!GetSecurityDescriptorDacl(first.descriptor, &presentFirst,
+                                 &aclFirst, &defaultedFirst) ||
+      !GetSecurityDescriptorDacl(second.descriptor, &presentSecond,
+                                 &aclSecond, &defaultedSecond) ||
+      presentFirst != presentSecond)
+    return false;
+  if (!presentFirst)
+    return true;
+  if (!aclFirst || !aclSecond)
+    return aclFirst == aclSecond;
+  return aclFirst->AclSize == aclSecond->AclSize &&
+         std::memcmp(aclFirst, aclSecond, aclFirst->AclSize) == 0;
+}
+
+// Exploratory NO-REPLACE rename using a pinned target directory and an
+// already-open source file. Only a *single trusted synthetic leaf* is used.
+// Neither atomic replace-existing nor a secure restore transaction is proven.
+bool renameOpenFileIntoPinnedDir(HANDLE source, HANDLE parent,
+                                 const wchar_t* leaf, DWORD* error) {
+  const size_t nameChars = std::wcslen(leaf);
+  if (!nameChars || nameChars > 128) {
+    if (error) *error = ERROR_INVALID_NAME;
+    return false;
+  }
+  const size_t size = offsetof(FILE_RENAME_INFO, FileName) +
+                      (nameChars + 1) * sizeof(wchar_t);
+  std::vector<ULONG_PTR> aligned((size + sizeof(ULONG_PTR) - 1) /
+                                 sizeof(ULONG_PTR), 0);
+  auto* info = reinterpret_cast<FILE_RENAME_INFO*>(aligned.data());
+  info->ReplaceIfExists = FALSE;
+  info->RootDirectory = parent;
+  info->FileNameLength = DWORD(nameChars * sizeof(wchar_t));
+  std::memcpy(info->FileName, leaf, (nameChars + 1) * sizeof(wchar_t));
+  const BOOL ok = SetFileInformationByHandle(source, FileRenameInfo,
+                                              info, DWORD(size));
+  if (error) *error = ok ? ERROR_SUCCESS : GetLastError();
+  return ok != FALSE;
+}
+
 bool writeFixture(const QString& path, const QByteArray& bytes) {
   QFile f(path);
   return f.open(QIODevice::WriteOnly | QIODevice::NewOnly)
@@ -42,6 +113,118 @@ QByteArray readHandle(HANDLE h) {
 class WindowsNativeRelativeResearch : public QObject {
   Q_OBJECT
  private slots:
+  void handleBoundRenameAndAclRemainWithOriginalDirectory() {
+    // Research-only Windows no-overwrite publication probe. The approved
+    // pathname is swapped after a directory handle is pinned. Source and
+    // destination are synthetic files inside the same QTemporaryDir.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir root(temp.path());
+    QVERIFY(root.mkpath("approved"));
+    QVERIFY(root.mkpath("outside"));
+    const QString approved = root.filePath("approved");
+    const QString moved = root.filePath("approved-moved");
+    const QString stagePath = QDir(approved).filePath("staged.tmp");
+    const QString outsidePath = root.filePath("outside/sentinel.txt");
+    const QByteArray stagedBytes("PINNED HANDLE DATA");
+    const QByteArray decoyBytes("WRONG DIRECTORY - NEVER REPLACE");
+    const QByteArray outsideBytes("OUTSIDE PUBLIC SENTINEL");
+    QVERIFY(writeFixture(stagePath, stagedBytes));
+    QVERIFY(writeFixture(outsidePath, outsideBytes));
+
+    Handle parent(CreateFileW(reinterpret_cast<LPCWSTR>(approved.utf16()),
+        FILE_ADD_FILE | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr));
+    QVERIFY2(parent.valid(), "Could not pin approved directory for rename");
+
+    BY_HANDLE_FILE_INFORMATION pinnedBefore{}, pinnedAfter{};
+    QVERIFY(GetFileInformationByHandle(parent.get(), &pinnedBefore));
+
+    // Move parent FIRST: opening a child handle before moving the parent
+    // can legitimately prevent a Windows directory rename.
+    QVERIFY2(root.rename("approved", "approved-moved"),
+             "Could not rename original directory while root is pinned");
+    QVERIFY(root.mkpath("approved"));
+    const QString decoyPath = QDir(approved).filePath("published.txt");
+    QVERIFY(writeFixture(decoyPath, decoyBytes));
+
+    const QString movedStage = QDir(moved).filePath("staged.tmp");
+    Handle source(CreateFileW(reinterpret_cast<LPCWSTR>(movedStage.utf16()),
+        DELETE | FILE_READ_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL |
+            SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    QVERIFY2(source.valid(), "Could not pin synthetic staging file");
+    FILE_ATTRIBUTE_TAG_INFO sourceTag{};
+    QVERIFY(GetFileInformationByHandleEx(source.get(), FileAttributeTagInfo,
+                                         &sourceTag, sizeof(sourceTag)));
+    QVERIFY(!(sourceTag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT));
+    BY_HANDLE_FILE_INFORMATION fileBefore{}, fileAfter{};
+    QVERIFY(GetFileInformationByHandle(source.get(), &fileBefore));
+    SecuritySnapshot aclBefore, aclAfter;
+    QVERIFY2(aclBefore.capture(source.get()),
+             "Cannot inspect staging owner/DACL by handle; fail closed");
+
+    DWORD error = ERROR_SUCCESS;
+    const bool renamed = renameOpenFileIntoPinnedDir(
+        source.get(), parent.get(), L"published.txt", &error);
+    QVERIFY2(renamed, qPrintable(QStringLiteral(
+        "Handle-relative no-replace rename failed, Win32 %1").arg(error)));
+
+    QVERIFY(GetFileInformationByHandle(source.get(), &fileAfter));
+    QVERIFY(GetFileInformationByHandle(parent.get(), &pinnedAfter));
+    QVERIFY(pinnedBefore.dwVolumeSerialNumber == pinnedAfter.dwVolumeSerialNumber);
+    QVERIFY(pinnedBefore.nFileIndexHigh == pinnedAfter.nFileIndexHigh);
+    QVERIFY(pinnedBefore.nFileIndexLow == pinnedAfter.nFileIndexLow);
+    QVERIFY(fileBefore.dwVolumeSerialNumber == fileAfter.dwVolumeSerialNumber);
+    QVERIFY(fileBefore.nFileIndexHigh == fileAfter.nFileIndexHigh);
+    QVERIFY(fileBefore.nFileIndexLow == fileAfter.nFileIndexLow);
+    QVERIFY2(aclAfter.capture(source.get()),
+             "Cannot inspect published owner/DACL by handle; fail closed");
+    QVERIFY2(sameOwnerAndDacl(aclBefore, aclAfter),
+             "Owner or DACL changed when file was renamed");
+
+    const QString publishedPath = QDir(moved).filePath("published.txt");
+    QVERIFY(!QFileInfo::exists(movedStage));
+    QFile published(publishedPath), decoy(decoyPath), outside(outsidePath);
+    QVERIFY(published.open(QIODevice::ReadOnly));
+    QCOMPARE(published.readAll(), stagedBytes);
+    QVERIFY(decoy.open(QIODevice::ReadOnly));
+    QCOMPARE(decoy.readAll(), decoyBytes);
+    QVERIFY(outside.open(QIODevice::ReadOnly));
+    QCOMPARE(outside.readAll(), outsideBytes);
+
+    // FILE_RENAME_INFO with ReplaceIfExists=FALSE must refuse an existing
+    // leaf in the original pinned parent; not silently overwrite it.
+    const QString blocked = QDir(moved).filePath("blocked.tmp");
+    const QString occupied = QDir(moved).filePath("occupied.txt");
+    const QByteArray occupiedBytes("EXISTING FILE MUST SURVIVE");
+    const QByteArray blockedBytes("NOT PUBLISHED");
+    QVERIFY(writeFixture(blocked, blockedBytes));
+    QVERIFY(writeFixture(occupied, occupiedBytes));
+    Handle blockedSource(CreateFileW(
+        reinterpret_cast<LPCWSTR>(blocked.utf16()),
+        DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    QVERIFY(blockedSource.valid());
+    const bool replacedExisting = renameOpenFileIntoPinnedDir(
+        blockedSource.get(), parent.get(), L"occupied.txt", &error);
+    QVERIFY2(!replacedExisting, "No-replace rename overwrote existing file");
+    QFile occupiedRead(occupied), blockedRead(blocked);
+    QVERIFY(occupiedRead.open(QIODevice::ReadOnly));
+    QCOMPARE(occupiedRead.readAll(), occupiedBytes);
+    QVERIFY(blockedRead.open(QIODevice::ReadOnly));
+    QCOMPARE(blockedRead.readAll(), blockedBytes);
+
+    // This proves only an uncontended handle-relative NO-REPLACE rename
+    // and owner/DACL stability for one opened NTFS file. It does not prove
+    // an atomic compare-and-swap over an existing destination, ACL policy
+    // correctness, data durability, or protection against privileged peers.
+  }
+
   void verifiedPayloadPublishesOnUnchangedSyntheticTarget() {
     // This test validates a known, public fixture digest BEFORE staging.
     // QSaveFile then publishes that data on a non-hostile, fixed test path.
