@@ -21,7 +21,8 @@ namespace {
 class Handle {
  public:
   explicit Handle(HANDLE h = INVALID_HANDLE_VALUE): h_(h) {}
-  ~Handle() { if (valid()) CloseHandle(h_); }
+  ~Handle() { close(); }
+  void close() { if (valid()) CloseHandle(h_); h_ = INVALID_HANDLE_VALUE; }
   Handle(const Handle&) = delete;
   Handle& operator=(const Handle&) = delete;
   bool valid() const { return h_ && h_ != INVALID_HANDLE_VALUE; }
@@ -219,10 +220,16 @@ class WindowsNativeRelativeResearch : public QObject {
     QVERIFY2(sameOwnerAndDacl(aclBefore, aclAfter),
              "Owner or DACL changed when file was renamed");
 
+    // The source handle requested DELETE access. Release it after the
+    // identity/ACL checks so Qt's separate reader avoids sharing conflicts.
+    source.close();
+
     const QString publishedPath = QDir(moved).filePath("published.txt");
     QVERIFY(!QFileInfo::exists(movedStage));
     QFile published(publishedPath), decoy(decoyPath), outside(outsidePath);
-    QVERIFY(published.open(QIODevice::ReadOnly));
+    QVERIFY2(published.open(QIODevice::ReadOnly),
+             qPrintable(QStringLiteral("Published file read failed: %1")
+                 .arg(published.errorString())));
     QCOMPARE(published.readAll(), stagedBytes);
     QVERIFY(decoy.open(QIODevice::ReadOnly));
     QCOMPARE(decoy.readAll(), decoyBytes);
@@ -248,10 +255,12 @@ class WindowsNativeRelativeResearch : public QObject {
     QVERIFY2(!replacedExisting, "No-replace rename overwrote existing file");
     QVERIFY2(renameStatus < 0,
              "No-replace existing-target failure did not report NTSTATUS error");
+    // Close the rejected source's DELETE handle before reading it with Qt.
+    blockedSource.close();
     QFile occupiedRead(occupied), blockedRead(blocked);
-    QVERIFY(occupiedRead.open(QIODevice::ReadOnly));
+    QVERIFY2(occupiedRead.open(QIODevice::ReadOnly), qPrintable(occupiedRead.errorString()));
     QCOMPARE(occupiedRead.readAll(), occupiedBytes);
-    QVERIFY(blockedRead.open(QIODevice::ReadOnly));
+    QVERIFY2(blockedRead.open(QIODevice::ReadOnly), qPrintable(blockedRead.errorString()));
     QCOMPARE(blockedRead.readAll(), blockedBytes);
 
     // This proves only an uncontended handle-relative NO-REPLACE rename
