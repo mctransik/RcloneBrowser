@@ -5,6 +5,8 @@
 #include <windows.h>
 #include <winternl.h>
 #include <aclapi.h>
+#include <sddl.h>
+#include <string>
 #include <cstddef>
 #include <cstring>
 #include <cwchar>
@@ -146,6 +148,214 @@ QByteArray readHandle(HANDLE h) {
 class WindowsNativeRelativeResearch : public QObject {
   Q_OBJECT
  private slots:
+  void protectedStageDaclBlocksBroadParentInheritance() {
+    // Isolated ACL-policy experiment using only disposable PUBLIC test files.
+    // A deliberately broad inheritable parent ACE for BUILTIN\Users provides
+    // a control case. The new stage must NOT inherit that ACE when created
+    // with an explicit protected DACL granting access to the current SID
+    // and LOCAL SYSTEM. We do not impersonate a second account here.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir root(temp.path());
+    QVERIFY(root.mkdir("approved"));
+    QVERIFY(root.mkdir("outside"));
+    const QString approved = root.filePath("approved");
+    const QString outsidePath = root.filePath("outside/sentinel.txt");
+    const QByteArray outsideBytes("OUTSIDE PUBLIC DATA UNCHANGED");
+    QVERIFY(writeFixture(outsidePath, outsideBytes));
+
+    // Discover the actual runner account SID; never hardcode an identity.
+    HANDLE tokenRaw = nullptr;
+    QVERIFY2(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &tokenRaw),
+             "Cannot open synthetic test process token");
+    Handle token(tokenRaw);
+    DWORD bytes = 0;
+    GetTokenInformation(token.get(), TokenUser, nullptr, 0, &bytes);
+    QVERIFY2(bytes > 0 && GetLastError() == ERROR_INSUFFICIENT_BUFFER,
+             "Could not size process token SID buffer");
+    std::vector<BYTE> tokenBytes(bytes);
+    QVERIFY(GetTokenInformation(token.get(), TokenUser,
+                                tokenBytes.data(), bytes, &bytes));
+    PSID userSid = reinterpret_cast<TOKEN_USER*>(
+        tokenBytes.data())->User.Sid;
+    QVERIFY(IsValidSid(userSid));
+    LPWSTR sidRaw = nullptr;
+    QVERIFY(ConvertSidToStringSidW(userSid, &sidRaw));
+    const std::wstring userSidText(sidRaw);
+    LocalFree(sidRaw);
+
+    // The directory's test ACL deliberately allows BUILTIN\Users read
+    // through an inheritable ACE. The creator retains full control.
+    const std::wstring parentSddl =
+        L"D:P(A;OICI;FA;;;" + userSidText + L")(A;OICI;GR;;;BU)";
+    PSECURITY_DESCRIPTOR parentRaw = nullptr;
+    QVERIFY2(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        parentSddl.c_str(), SDDL_REVISION_1, &parentRaw, nullptr),
+        "Could not build disposable parent ACL");
+    struct LocalDescriptor {
+      PSECURITY_DESCRIPTOR value;
+      ~LocalDescriptor() { if (value) LocalFree(value); }
+    } parentSecurity{parentRaw};
+    PACL inheritedParentAcl = nullptr;
+    BOOL parentDaclPresent = FALSE, parentDaclDefaulted = FALSE;
+    QVERIFY(GetSecurityDescriptorDacl(parentSecurity.value,
+                                     &parentDaclPresent, &inheritedParentAcl,
+                                     &parentDaclDefaulted));
+    QVERIFY(parentDaclPresent && inheritedParentAcl);
+
+    Handle parent(CreateFileW(reinterpret_cast<LPCWSTR>(approved.utf16()),
+        WRITE_DAC | READ_CONTROL | FILE_ADD_FILE | FILE_READ_ATTRIBUTES |
+            SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    QVERIFY2(parent.valid(), "Cannot open disposable parent with WRITE_DAC");
+    const DWORD parentAclResult = SetSecurityInfo(parent.get(), SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+        nullptr, nullptr, inheritedParentAcl, nullptr);
+    QVERIFY2(parentAclResult == ERROR_SUCCESS,
+             qPrintable(QStringLiteral("Cannot configure parent ACL: %1")
+                        .arg(parentAclResult)));
+
+    // The protected child ACL intentionally excludes BUILTIN\Users.
+    // A protected DACL is materially different from checking that an
+    // arbitrary, potentially unsafe inherited DACL stayed unchanged.
+    const std::wstring stageSddl =
+        L"D:P(A;;FA;;;" + userSidText + L")(A;;FA;;;SY)";
+    PSECURITY_DESCRIPTOR stageRawSd = nullptr;
+    QVERIFY2(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        stageSddl.c_str(), SDDL_REVISION_1, &stageRawSd, nullptr),
+        "Could not build explicitly protected stage ACL");
+    LocalDescriptor stageSecurity{stageRawSd};
+
+    BYTE usersSidBuffer[SECURITY_MAX_SID_SIZE] = {};
+    DWORD usersSidSize = sizeof(usersSidBuffer);
+    QVERIFY(CreateWellKnownSid(WinBuiltinUsersSid, nullptr,
+                               usersSidBuffer, &usersSidSize));
+    PSID usersSid = usersSidBuffer;
+    auto findAllow = [](PACL acl, PSID sid, bool* inherited) -> bool {
+      if (!acl || !IsValidAcl(acl) || !IsValidSid(sid))
+        return false;
+      for (DWORD index = 0; index < acl->AceCount; ++index) {
+        void* rawAce = nullptr;
+        if (!GetAce(acl, index, &rawAce))
+          return false;
+        const auto* header = static_cast<const ACE_HEADER*>(rawAce);
+        if (header->AceType != ACCESS_ALLOWED_ACE_TYPE)
+          continue;
+        const auto* ace = static_cast<const ACCESS_ALLOWED_ACE*>(rawAce);
+        if (EqualSid(const_cast<PSID>(static_cast<const void*>(&ace->SidStart)),
+                     sid)) {
+          if (inherited)
+            *inherited = (header->AceFlags & INHERITED_ACE) != 0;
+          return true;
+        }
+      }
+      return false;
+    };
+
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    QVERIFY(ntdll != nullptr);
+    auto nativeCreate = reinterpret_cast<NtCreateFileFn>(
+        GetProcAddress(ntdll, "NtCreateFile"));
+    QVERIFY(nativeCreate != nullptr);
+    constexpr ULONG kCreateNew = 2; // Native FILE_CREATE: reject collisions
+    constexpr ULONG kSync = 0x20;
+    constexpr ULONG kOrdinaryFile = 0x40;
+    constexpr ULONG kNoFollow = 0x00200000;
+    auto createChild = [&](wchar_t* leafName, PSECURITY_DESCRIPTOR sd,
+                           HANDLE* returned) -> NTSTATUS {
+      UNICODE_STRING name{};
+      name.Buffer = leafName;
+      name.Length = USHORT(std::wcslen(leafName) * sizeof(wchar_t));
+      name.MaximumLength = USHORT(name.Length + sizeof(wchar_t));
+      OBJECT_ATTRIBUTES attrs{};
+      attrs.Length = sizeof(attrs);
+      attrs.RootDirectory = parent.get();
+      attrs.ObjectName = &name;
+      attrs.Attributes = OBJ_CASE_INSENSITIVE;
+      attrs.SecurityDescriptor = sd;
+      IO_STATUS_BLOCK io{};
+      return nativeCreate(returned,
+          FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES |
+              READ_CONTROL | SYNCHRONIZE,
+          &attrs, &io, nullptr, FILE_ATTRIBUTE_NORMAL,
+          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+          kCreateNew, kSync | kOrdinaryFile | kNoFollow, nullptr, 0);
+    };
+
+    // Control: without an explicit SD, the test parent's broad ACE is
+    // inherited by the newly created ordinary file.
+    wchar_t inheritedName[] = L"inherited.tmp";
+    HANDLE inheritedRaw = INVALID_HANDLE_VALUE;
+    const NTSTATUS inheritedStatus =
+        createChild(inheritedName, nullptr, &inheritedRaw);
+    Handle inheritedFile(inheritedRaw);
+    QVERIFY2(inheritedStatus >= 0 && inheritedFile.valid(),
+             qPrintable(QStringLiteral("Inherited fixture creation: 0x%1")
+                        .arg(quint32(inheritedStatus), 8, 16,
+                             QLatin1Char('0'))));
+    SecuritySnapshot inheritedAcl;
+    QVERIFY(inheritedAcl.capture(inheritedFile.get()));
+    QVERIFY(inheritedAcl.dacl && IsValidAcl(inheritedAcl.dacl));
+    bool isInherited = false;
+    QVERIFY2(findAllow(inheritedAcl.dacl, usersSid, &isInherited) && isInherited,
+             "Expected inherited BUILTIN Users ACE missing in control file");
+
+    // Candidate: explicit protected stage SD should suppress broad parent
+    // inheritance. The ACL is inspected from the OPENED stage handle.
+    wchar_t protectedName[] = L"protected.tmp";
+    HANDLE protectedRaw = INVALID_HANDLE_VALUE;
+    const NTSTATUS protectedStatus =
+        createChild(protectedName, stageSecurity.value, &protectedRaw);
+    Handle protectedFile(protectedRaw);
+    QVERIFY2(protectedStatus >= 0 && protectedFile.valid(),
+             qPrintable(QStringLiteral("Protected stage creation: 0x%1")
+                        .arg(quint32(protectedStatus), 8, 16,
+                             QLatin1Char('0'))));
+    SecuritySnapshot protectedAcl;
+    QVERIFY(protectedAcl.capture(protectedFile.get()));
+    QVERIFY2(protectedAcl.dacl && IsValidAcl(protectedAcl.dacl),
+             "Protected stage has absent/invalid DACL: fail closed");
+    SECURITY_DESCRIPTOR_CONTROL control{};
+    DWORD revision = 0;
+    QVERIFY(GetSecurityDescriptorControl(protectedAcl.descriptor,
+                                         &control, &revision));
+    QVERIFY2((control & SE_DACL_PROTECTED) != 0,
+             "New stage DACL was NOT protected from inheritance");
+    QVERIFY2(!findAllow(protectedAcl.dacl, usersSid, nullptr),
+             "Broad inherited Users read ACE leaked into protected stage");
+    QVERIFY2(findAllow(protectedAcl.dacl, userSid, nullptr),
+             "New stage does not explicitly allow its creating account");
+
+    for (DWORD i = 0; i < protectedAcl.dacl->AceCount; ++i) {
+      void* rawAce = nullptr;
+      QVERIFY(GetAce(protectedAcl.dacl, i, &rawAce));
+      const auto* header = static_cast<const ACE_HEADER*>(rawAce);
+      QVERIFY2((header->AceFlags & INHERITED_ACE) == 0,
+               "Protected stage unexpectedly has an inherited ACE");
+    }
+
+    const QByteArray publicBytes("PUBLIC SYNTHETIC STAGE ACL FIXTURE");
+    DWORD written = 0;
+    QVERIFY(WriteFile(protectedFile.get(), publicBytes.constData(),
+                      DWORD(publicBytes.size()), &written, nullptr));
+    QCOMPARE(written, DWORD(publicBytes.size()));
+    LARGE_INTEGER begin{};
+    QVERIFY(SetFilePointerEx(protectedFile.get(), begin, nullptr, FILE_BEGIN));
+    // readHandle reads up to 32 bytes: verify the exact 31-byte fixture.
+    QCOMPARE(readHandle(protectedFile.get()), publicBytes);
+
+    protectedFile.close();
+    inheritedFile.close();
+    QFile outside(outsidePath);
+    QVERIFY(outside.open(QIODevice::ReadOnly));
+    QCOMPARE(outside.readAll(), outsideBytes);
+    // An actual second-user access-denied test, same-token interference,
+    // ACL changes while writing, power-loss persistence and secret plaintext
+    // security remain OPEN; no production ACL policy approval is implied.
+  }
+
   void nativeCreateNewStageIsBoundToPinnedDirectory() {
     // Research-only: create one disposable file relative to a directory
     // handle pinned BEFORE the directory's pathname is replaced. No real
