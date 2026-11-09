@@ -146,6 +146,153 @@ QByteArray readHandle(HANDLE h) {
 class WindowsNativeRelativeResearch : public QObject {
   Q_OBJECT
  private slots:
+  void nativeCreateNewStageIsBoundToPinnedDirectory() {
+    // Research-only: create one disposable file relative to a directory
+    // handle pinned BEFORE the directory's pathname is replaced. No real
+    // backup data, no inherited ACL policy approval, no production write.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QDir root(temp.path());
+    QVERIFY(root.mkdir("approved"));
+    QVERIFY(root.mkdir("outside"));
+    const QString approved = root.filePath("approved");
+    const QString moved = root.filePath("approved-moved");
+    const QString outsidePath = root.filePath("outside/sentinel.txt");
+    const QByteArray outsideBytes("OUTSIDE UNCHANGED");
+    const QByteArray decoyBytes("DECOY MUST NEVER CHANGE");
+    const QByteArray stagedBytes("HANDLE-BOUND STAGE");
+    QVERIFY(writeFixture(outsidePath, outsideBytes));
+
+    Handle parent(CreateFileW(reinterpret_cast<LPCWSTR>(approved.utf16()),
+        FILE_ADD_FILE | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    QVERIFY2(parent.valid(), "Could not pin disposable approved parent");
+    BY_HANDLE_FILE_INFORMATION parentBefore{}, parentAfter{}, stageIdentity{};
+    FILE_ATTRIBUTE_TAG_INFO parentTag{}, stageTag{};
+    QVERIFY(GetFileInformationByHandle(parent.get(), &parentBefore));
+    QVERIFY(GetFileInformationByHandleEx(parent.get(), FileAttributeTagInfo,
+                                        &parentTag, sizeof(parentTag)));
+    QVERIFY2((parentTag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
+             (parentTag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0,
+             "Approved parent is not an ordinary directory");
+
+    // Swap the original pathname while only the verified parent is pinned.
+    QVERIFY2(root.rename("approved", "approved-moved"),
+             "Could not move disposable approved parent");
+    QVERIFY(root.mkdir("approved"));
+    const QString decoyPath = QDir(approved).filePath("staged.tmp");
+    QVERIFY(writeFixture(decoyPath, decoyBytes));
+    const QString expectedPath = QDir(moved).filePath("staged.tmp");
+    QVERIFY(!QFileInfo::exists(expectedPath));
+
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    QVERIFY(ntdll != nullptr);
+    auto nativeCreate = reinterpret_cast<NtCreateFileFn>(
+        GetProcAddress(ntdll, "NtCreateFile"));
+    QVERIFY(nativeCreate != nullptr);
+
+    // Exactly one fixed synthetic component: no absolute-path fallback.
+    wchar_t nameBytes[] = L"staged.tmp";
+    UNICODE_STRING leaf{};
+    leaf.Buffer = nameBytes;
+    leaf.Length = USHORT((sizeof(nameBytes) / sizeof(wchar_t) - 1)
+                         * sizeof(wchar_t));
+    leaf.MaximumLength = USHORT(sizeof(nameBytes));
+    OBJECT_ATTRIBUTES attrs{};
+    attrs.Length = sizeof(attrs);
+    attrs.RootDirectory = parent.get();
+    attrs.ObjectName = &leaf;
+    attrs.Attributes = OBJ_CASE_INSENSITIVE;
+
+    constexpr ULONG kCreateNewOnly = 2;        // Native FILE_CREATE
+    constexpr ULONG kSynchronous = 0x20;       // FILE_SYNCHRONOUS_IO_NONALERT
+    constexpr ULONG kRegularFile = 0x40;       // FILE_NON_DIRECTORY_FILE
+    constexpr ULONG kNoFollowFinal = 0x00200000; // FILE_OPEN_REPARSE_POINT
+    IO_STATUS_BLOCK io{};
+    HANDLE stageRaw = INVALID_HANDLE_VALUE;
+    const NTSTATUS created = nativeCreate(&stageRaw,
+        FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        &attrs, &io, nullptr, FILE_ATTRIBUTE_NORMAL,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        kCreateNewOnly, kSynchronous | kRegularFile | kNoFollowFinal,
+        nullptr, 0);
+    Handle stage(stageRaw);
+    QVERIFY2(created >= 0 && stage.valid(),
+             qPrintable(QStringLiteral(
+                 "Pinned-relative FILE_CREATE failed, NTSTATUS 0x%1")
+                 .arg(quint32(created), 8, 16, QLatin1Char('0'))));
+
+    QVERIFY(GetFileInformationByHandleEx(stage.get(), FileAttributeTagInfo,
+                                         &stageTag, sizeof(stageTag)));
+    QVERIFY2((stageTag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0 &&
+             (stageTag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0,
+             "New stage was not an ordinary, non-reparse file");
+    QVERIFY(GetFileInformationByHandle(stage.get(), &stageIdentity));
+    QVERIFY(GetFileInformationByHandle(parent.get(), &parentAfter));
+    QCOMPARE(parentAfter.dwVolumeSerialNumber, parentBefore.dwVolumeSerialNumber);
+    QCOMPARE(parentAfter.nFileIndexHigh, parentBefore.nFileIndexHigh);
+    QCOMPARE(parentAfter.nFileIndexLow, parentBefore.nFileIndexLow);
+    QCOMPARE(stageIdentity.dwVolumeSerialNumber, parentBefore.dwVolumeSerialNumber);
+
+    DWORD written = 0;
+    QVERIFY(WriteFile(stage.get(), stagedBytes.constData(),
+                      DWORD(stagedBytes.size()), &written, nullptr));
+    QCOMPARE(written, DWORD(stagedBytes.size()));
+    QVERIFY2(FlushFileBuffers(stage.get()),
+             "Could not flush disposable staged file through opened handle");
+    LARGE_INTEGER start{};
+    QVERIFY(SetFilePointerEx(stage.get(), start, nullptr, FILE_BEGIN));
+    QCOMPARE(readHandle(stage.get()), stagedBytes);
+
+    // A second CREATE must not open or truncate this same staging name.
+    IO_STATUS_BLOCK collisionIo{};
+    HANDLE duplicateRaw = INVALID_HANDLE_VALUE;
+    const NTSTATUS duplicateStatus = nativeCreate(&duplicateRaw,
+        FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE,
+        &attrs, &collisionIo, nullptr, FILE_ATTRIBUTE_NORMAL,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        kCreateNewOnly, kSynchronous | kRegularFile | kNoFollowFinal,
+        nullptr, 0);
+    Handle duplicate(duplicateRaw);
+    QVERIFY2(duplicateStatus < 0 && !duplicate.valid(),
+             "FILE_CREATE unexpectedly accepted an existing stage name");
+
+    // Windows NTFS should also reject case-variant collisions under the
+    // case-insensitive OBJ_CASE_INSENSITIVE name lookup used by this test.
+    wchar_t upperBytes[] = L"STAGED.TMP";
+    leaf.Buffer = upperBytes;
+    leaf.Length = USHORT((sizeof(upperBytes) / sizeof(wchar_t) - 1)
+                         * sizeof(wchar_t));
+    leaf.MaximumLength = USHORT(sizeof(upperBytes));
+    IO_STATUS_BLOCK caseIo{};
+    HANDLE caseRaw = INVALID_HANDLE_VALUE;
+    const NTSTATUS caseStatus = nativeCreate(&caseRaw,
+        FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE,
+        &attrs, &caseIo, nullptr, FILE_ATTRIBUTE_NORMAL,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        kCreateNewOnly, kSynchronous | kRegularFile | kNoFollowFinal,
+        nullptr, 0);
+    Handle caseDuplicate(caseRaw);
+    QVERIFY2(caseStatus < 0 && !caseDuplicate.valid(),
+             "Case-colliding FILE_CREATE unexpectedly succeeded");
+
+    // Close the writer before independent Qt readback; verify that the
+    // content was created in the pinned original, NOT its decoy pathname.
+    stage.close();
+    QFile actual(expectedPath), decoy(decoyPath), outside(outsidePath);
+    QVERIFY2(actual.open(QIODevice::ReadOnly), qPrintable(actual.errorString()));
+    QCOMPARE(actual.readAll(), stagedBytes);
+    QVERIFY(decoy.open(QIODevice::ReadOnly));
+    QCOMPARE(decoy.readAll(), decoyBytes);
+    QVERIFY(outside.open(QIODevice::ReadOnly));
+    QCOMPARE(outside.readAll(), outsideBytes);
+
+    // This tests neither restrictive stage ACLs nor transaction cleanup,
+    // concurrent attackers at publication, rollback, or power-loss safety.
+  }
+
   void handleBoundRenameAndAclRemainWithOriginalDirectory() {
     // Research-only Windows no-overwrite publication probe. The approved
     // pathname is swapped after a directory handle is pinned. Source and
