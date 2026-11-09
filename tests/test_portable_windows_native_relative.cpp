@@ -336,14 +336,14 @@ class WindowsNativeRelativeResearch : public QObject {
                "Protected stage unexpectedly has an inherited ACE");
     }
 
-    const QByteArray publicBytes("PUBLIC SYNTHETIC STAGE ACL FIXTURE");
+    const QByteArray publicBytes("PUBLIC STAGE ACL CHECK");
     DWORD written = 0;
     QVERIFY(WriteFile(protectedFile.get(), publicBytes.constData(),
                       DWORD(publicBytes.size()), &written, nullptr));
     QCOMPARE(written, DWORD(publicBytes.size()));
     LARGE_INTEGER begin{};
     QVERIFY(SetFilePointerEx(protectedFile.get(), begin, nullptr, FILE_BEGIN));
-    // readHandle reads up to 32 bytes: verify the exact 31-byte fixture.
+    // readHandle reads up to 32 bytes; this test fixture fits in one read.
     QCOMPARE(readHandle(protectedFile.get()), publicBytes);
 
     protectedFile.close();
