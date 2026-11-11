@@ -6,6 +6,7 @@
 #endif
 #include <windows.h>
 #include <winioctl.h>
+#include <winternl.h>
 
 #include <QtTest>
 #include <QByteArray>
@@ -13,10 +14,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
+#include <QSemaphore>
 
 #include <cstddef>
 #include <cstring>
 #include <vector>
+#include <thread>
 
 namespace {
 
@@ -239,6 +242,504 @@ class TestPortableWindowsReparse final : public QObject {
     QFile preserved(targetFile);
     QVERIFY(preserved.open(QIODevice::ReadOnly));
     QCOMPARE(preserved.readAll(), sentinel);
+  }
+
+  void nativeRelativeIntermediateNtfsJunctionIsDenied() {
+    // A real junction is the *intermediate* component of a hypothetical
+    // approved/redirected-child/sentinel.txt restore destination. Only
+    // synthetic temporary files are used. We never open the leaf via link.
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString approved = temporary.filePath(QStringLiteral("approved"));
+    const QString target = temporary.filePath(QStringLiteral("outside-target"));
+    const QString redirect = approved + QStringLiteral("/redirected-child");
+    QVERIFY(QDir().mkpath(approved));
+    QVERIFY(QDir().mkpath(target));
+    QVERIFY(QDir().mkpath(redirect));
+    const QByteArray sentinel("OUTSIDE TARGET - DO NOT FOLLOW");
+    const QString targetFile = target + QStringLiteral("/sentinel.txt");
+    QVERIFY(writePublicBytes(targetFile, sentinel));
+
+    DWORD error = ERROR_SUCCESS;
+    QVERIFY2(createTemporaryNtfsJunction(redirect, target, &error),
+             qPrintable(QStringLiteral("Mandatory NTFS junction fixture failed, Win32 %1")
+                 .arg(error)));
+
+    // Pin approved root and inspect the actual opened object, not a
+    // pathname lookup or a QFileInfo-derived parent chain.
+    UniqueHandle root(openNoFollow(approved, FILE_TRAVERSE |
+                                              FILE_READ_ATTRIBUTES | SYNCHRONIZE));
+    QVERIFY2(root.valid(), "Cannot open synthetic approved directory");
+    ObservedObject rootInfo{};
+    QVERIFY(inspectOpened(root.get(), &rootInfo));
+    QVERIFY(!(rootInfo.attributes & FILE_ATTRIBUTE_REPARSE_POINT));
+
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    QVERIFY(ntdll != nullptr);
+    using NtCreateFileFn = NTSTATUS (NTAPI *)(PHANDLE, ACCESS_MASK,
+        POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, PLARGE_INTEGER,
+        ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+    auto ntCreateFile = reinterpret_cast<NtCreateFileFn>(
+        GetProcAddress(ntdll, "NtCreateFile"));
+    QVERIFY2(ntCreateFile != nullptr, "NtCreateFile not available");
+
+    wchar_t component[] = L"redirected-child"; // A single trusted fixture component.
+    UNICODE_STRING name{};
+    name.Buffer = component;
+    name.Length = USHORT((sizeof(component) / sizeof(wchar_t) - 1) * sizeof(wchar_t));
+    name.MaximumLength = USHORT(sizeof(component));
+    OBJECT_ATTRIBUTES attrs{};
+    attrs.Length = sizeof(attrs);
+    attrs.RootDirectory = root.get();
+    attrs.ObjectName = &name;
+    attrs.Attributes = OBJ_CASE_INSENSITIVE;
+    IO_STATUS_BLOCK ios{};
+    HANDLE raw = INVALID_HANDLE_VALUE;
+    constexpr ULONG kOpenExisting = 1;
+    constexpr ULONG kDirectoryOnly = 0x00000001;
+    constexpr ULONG kSynchronous = 0x00000020;
+    constexpr ULONG kOpenReparseItself = 0x00200000;
+    const NTSTATUS status = ntCreateFile(&raw,
+        FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
+        &attrs, &ios, nullptr, 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        kOpenExisting, kDirectoryOnly | kSynchronous | kOpenReparseItself,
+        nullptr, 0);
+    {
+      UniqueHandle child(raw);
+      QVERIFY2(status >= 0 && child.valid(),
+               qPrintable(QStringLiteral("Native no-follow junction open failed: NTSTATUS 0x%1")
+                 .arg(quint32(status), 8, 16, QLatin1Char('0'))));
+      ObservedObject observed{};
+      QVERIFY(inspectOpened(child.get(), &observed));
+      QVERIFY(observed.attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+      QCOMPARE(observed.tag, DWORD(IO_REPARSE_TAG_MOUNT_POINT));
+
+      // Fail closed: a restore walker MUST stop here and never open
+      // the hypothetical sentinel.txt under this intermediate component.
+      QVERIFY(candidateRejectReparse(observed));
+    }
+
+    QVERIFY(removeTemporaryJunction(redirect));
+    QVERIFY(QDir().rmdir(redirect));
+    QFile preserved(targetFile);
+    QVERIFY(preserved.open(QIODevice::ReadOnly));
+    QCOMPARE(preserved.readAll(), sentinel);
+    // This is a deterministic research fixture, NOT a complete secure
+    // directory resolver, write/commit algorithm or TOCTOU proof.
+  }
+
+  void checkedChildReplacedByJunctionMustBeRejectedOnUse() {
+    // Deterministic check-then-change-then-use fixture. No timing/scheduling
+    // races, user files, secrets, network shares or production restore writes.
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString approved = temporary.filePath(QStringLiteral("approved"));
+    const QString childPath = approved + QStringLiteral("/child");
+    const QString target = temporary.filePath(QStringLiteral("outside-target"));
+    const QString sentinelPath = target + QStringLiteral("/sentinel.txt");
+    QVERIFY(QDir().mkpath(childPath));
+    QVERIFY(QDir().mkpath(target));
+    const QByteArray sentinel("EXTERNAL PUBLIC SENTINEL UNCHANGED");
+    QVERIFY(writePublicBytes(sentinelPath, sentinel));
+
+    // Keep only the approved root handle open during namespace replacement.
+    // The inspected child handle is deliberately closed before the swap,
+    // modeling a stale validation result that must NOT authorize later use.
+    UniqueHandle root(openNoFollow(approved, FILE_TRAVERSE |
+                                            FILE_READ_ATTRIBUTES | SYNCHRONIZE));
+    QVERIFY(root.valid());
+    ObservedObject rootIdentity{};
+    QVERIFY(inspectOpened(root.get(), &rootIdentity));
+    QVERIFY(!candidateRejectReparse(rootIdentity));
+
+    HMODULE module = GetModuleHandleW(L"ntdll.dll");
+    QVERIFY(module != nullptr);
+    using NtCreateFileFn = NTSTATUS (NTAPI *)(PHANDLE, ACCESS_MASK,
+        POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, PLARGE_INTEGER,
+        ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+    auto ntCreateFile = reinterpret_cast<NtCreateFileFn>(
+        GetProcAddress(module, "NtCreateFile"));
+    QVERIFY2(ntCreateFile != nullptr, "NtCreateFile missing");
+
+    wchar_t childName[] = L"child"; // One synthetic component, no path separators.
+    UNICODE_STRING component{};
+    component.Buffer = childName;
+    component.Length = USHORT((sizeof(childName) / sizeof(wchar_t) - 1)
+                              * sizeof(wchar_t));
+    component.MaximumLength = USHORT(sizeof(childName));
+    OBJECT_ATTRIBUTES attributes{};
+    attributes.Length = sizeof(attributes);
+    attributes.RootDirectory = root.get();
+    attributes.ObjectName = &component;
+    attributes.Attributes = OBJ_CASE_INSENSITIVE;
+
+    constexpr ULONG kFileOpen = 1;
+    constexpr ULONG kDirectoryOnly = 0x00000001;
+    constexpr ULONG kSynchronousNonalert = 0x00000020;
+    constexpr ULONG kOpenReparsePoint = 0x00200000;
+    auto openChildNoFollow = [&](HANDLE *out) -> NTSTATUS {
+      *out = INVALID_HANDLE_VALUE;
+      IO_STATUS_BLOCK io{};
+      return ntCreateFile(out, FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
+          &attributes, &io, nullptr, 0,
+          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+          kFileOpen, kDirectoryOnly | kSynchronousNonalert | kOpenReparsePoint,
+          nullptr, 0);
+    };
+
+    ObservedObject checked{};
+    {
+      HANDLE raw = INVALID_HANDLE_VALUE;
+      const NTSTATUS status = openChildNoFollow(&raw);
+      UniqueHandle child(raw);
+      QVERIFY2(status >= 0 && child.valid(),
+               "Initial relative child inspection failed");
+      QVERIFY(inspectOpened(child.get(), &checked));
+      QVERIFY(!candidateRejectReparse(checked));
+      QVERIFY(checked.attributes & FILE_ATTRIBUTE_DIRECTORY);
+    }  // Close child before rename; a pinned child may prevent the rename.
+
+    // The attacker-controlled name now resolves to a genuine NTFS junction,
+    // but the approved root handle and old checked child still existed.
+    QDir approvedDir(approved);
+    QVERIFY2(approvedDir.rename(QStringLiteral("child"),
+                                QStringLiteral("child-moved")),
+             "Could not replace disposable child after initial inspection");
+    QVERIFY(QDir().mkpath(childPath));
+    DWORD winError = ERROR_SUCCESS;
+    QVERIFY2(createTemporaryNtfsJunction(childPath, target, &winError),
+             qPrintable(QStringLiteral("Mandatory junction creation failed, Win32 %1")
+                .arg(winError)));
+
+    HANDLE changedRaw = INVALID_HANDLE_VALUE;
+    const NTSTATUS changedStatus = openChildNoFollow(&changedRaw);
+    {
+      UniqueHandle changed(changedRaw);
+      QVERIFY2(changedStatus >= 0 && changed.valid(),
+               "Failed to inspect replaced child via pinned parent handle");
+      ObservedObject used{};
+      QVERIFY(inspectOpened(changed.get(), &used));
+      QVERIFY(!sameOpenedIdentity(checked, used));
+      QVERIFY(used.attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+      QCOMPARE(used.tag, DWORD(IO_REPARSE_TAG_MOUNT_POINT));
+      // The earlier 'safe' result is stale. Never traverse this component
+      // or open its leaf: the CURRENT opened object must be denied.
+      QVERIFY(candidateRejectReparse(used));
+    }
+
+    ObservedObject stillRoot{};
+    QVERIFY(inspectOpened(root.get(), &stillRoot));
+    QVERIFY(sameOpenedIdentity(rootIdentity, stillRoot));
+    QVERIFY(removeTemporaryJunction(childPath));
+    QVERIFY(QDir().rmdir(childPath));
+    QFile preserved(sentinelPath);
+    QVERIFY(preserved.open(QIODevice::ReadOnly));
+    QCOMPARE(preserved.readAll(), sentinel);
+    // This fixture exercises deterministic post-check substitution only.
+    // It is NOT an asynchronous race test or a secure restore implementation.
+  }
+
+  void concurrentChildSwapIsRejectedAtUse() {
+    // Two-thread, explicitly staged check/swap/use fixture. The worker
+    // changes the namespace after initial inspection. Synchronization
+    // makes this reproducible: it is NOT randomized race fuzzing.
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString approved = temporary.filePath(QStringLiteral("approved"));
+    const QString childPath = approved + QStringLiteral("/child");
+    const QString external = temporary.filePath(QStringLiteral("external"));
+    const QString outsideFile = external + QStringLiteral("/sentinel.txt");
+    const QString originalFile = childPath + QStringLiteral("/original.txt");
+    QVERIFY(QDir().mkpath(childPath));
+    QVERIFY(QDir().mkpath(external));
+    const QByteArray sentinel("OUTSIDE SENTINEL - NO WRITES");
+    const QByteArray original("ORIGINAL SAFE DIRECTORY");
+    QVERIFY(writePublicBytes(outsideFile, sentinel));
+    QVERIFY(writePublicBytes(originalFile, original));
+
+    UniqueHandle root(openNoFollow(approved,
+        FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE));
+    QVERIFY2(root.valid(), "Cannot pin synthetic parent directory");
+    ObservedObject pinnedRoot{};
+    QVERIFY(inspectOpened(root.get(), &pinnedRoot));
+    QVERIFY(!candidateRejectReparse(pinnedRoot));
+
+    HMODULE module = GetModuleHandleW(L"ntdll.dll");
+    QVERIFY(module != nullptr);
+    using NtCreateFileFn = NTSTATUS (NTAPI *)(PHANDLE, ACCESS_MASK,
+        POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, PLARGE_INTEGER,
+        ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+    auto ntCreateFile = reinterpret_cast<NtCreateFileFn>(
+        GetProcAddress(module, "NtCreateFile"));
+    QVERIFY(ntCreateFile != nullptr);
+
+    wchar_t childComponent[] = L"child";  // Exactly one component.
+    UNICODE_STRING name{};
+    name.Buffer = childComponent;
+    name.Length = USHORT((sizeof(childComponent) / sizeof(wchar_t) - 1)
+                         * sizeof(wchar_t));
+    name.MaximumLength = USHORT(sizeof(childComponent));
+    OBJECT_ATTRIBUTES attrs{};
+    attrs.Length = sizeof(attrs);
+    attrs.RootDirectory = root.get();
+    attrs.ObjectName = &name;
+    attrs.Attributes = OBJ_CASE_INSENSITIVE;
+    auto openChild = [&](HANDLE *out) -> NTSTATUS {
+      *out = INVALID_HANDLE_VALUE;
+      IO_STATUS_BLOCK io{};
+      constexpr ULONG kExisting = 1;
+      constexpr ULONG kDirectory = 0x00000001;
+      constexpr ULONG kSync = 0x00000020;
+      constexpr ULONG kNoFollow = 0x00200000;
+      return ntCreateFile(out,
+          FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+          &attrs, &io, nullptr, 0,
+          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+          kExisting, kDirectory | kSync | kNoFollow, nullptr, 0);
+    };
+
+    ObservedObject initiallyChecked{};
+    {
+      HANDLE raw = INVALID_HANDLE_VALUE;
+      const NTSTATUS status = openChild(&raw);
+      UniqueHandle child(raw);
+      QVERIFY2(status >= 0 && child.valid(),
+               "Initial single-component relative open failed");
+      QVERIFY(inspectOpened(child.get(), &initiallyChecked));
+      QVERIFY(!candidateRejectReparse(initiallyChecked));
+      QVERIFY(initiallyChecked.attributes & FILE_ATTRIBUTE_DIRECTORY);
+    }  // Child closed: Win32 may deny rename with this handle open.
+
+    struct SwapOutcome {
+      bool renamed = false;
+      bool createdDirectory = false;
+      bool junctionCreated = false;
+      DWORD junctionError = ERROR_SUCCESS;
+    };
+    SwapOutcome swap;
+    QSemaphore startSwap;
+    std::thread mutator([&] {
+      startSwap.acquire();
+      QDir parent(approved);
+      swap.renamed = parent.rename(QStringLiteral("child"),
+                                   QStringLiteral("child-moved"));
+      if (!swap.renamed)
+        return;
+      swap.createdDirectory = QDir().mkpath(childPath);
+      if (!swap.createdDirectory)
+        return;
+      swap.junctionCreated = createTemporaryNtfsJunction(
+          childPath, external, &swap.junctionError);
+    });
+
+    // Perform a safe inspection from the pinned parent while another thread
+    // is free to replace a DIFFERENT component. No QTest early-return is
+    // allowed until after join (std::thread must always be joined).
+    startSwap.release();
+    ObservedObject parentDuringSwap{};
+    const bool inspectedParentDuringSwap =
+        inspectOpened(root.get(), &parentDuringSwap);
+    mutator.join();
+
+    QVERIFY2(swap.renamed, "Concurrent fixture child rename failed");
+    QVERIFY2(swap.createdDirectory, "Concurrent fixture directory creation failed");
+    QVERIFY2(swap.junctionCreated,
+             qPrintable(QStringLiteral("Concurrent fixture junction failed, Win32 %1")
+                 .arg(swap.junctionError)));
+    QVERIFY(inspectedParentDuringSwap);
+    QVERIFY(sameOpenedIdentity(pinnedRoot, parentDuringSwap));
+
+    // The stale 'safe' observation cannot authorize a subsequent lookup.
+    // Re-open exactly one component from the pinned parent with no-follow.
+    HANDLE changedRaw = INVALID_HANDLE_VALUE;
+    const NTSTATUS changedStatus = openChild(&changedRaw);
+    {
+      UniqueHandle changed(changedRaw);
+      QVERIFY2(changedStatus >= 0 && changed.valid(),
+               "Re-open after worker mutation failed");
+      ObservedObject now{};
+      QVERIFY(inspectOpened(changed.get(), &now));
+      QVERIFY(!sameOpenedIdentity(initiallyChecked, now));
+      QCOMPARE(now.tag, DWORD(IO_REPARSE_TAG_MOUNT_POINT));
+      QVERIFY(now.attributes & FILE_ATTRIBUTE_REPARSE_POINT);
+      QVERIFY(candidateRejectReparse(now));
+      // Do not open files THROUGH the junction, even for the fixture.
+    }
+
+    ObservedObject rootAfterSwap{};
+    QVERIFY(inspectOpened(root.get(), &rootAfterSwap));
+    QVERIFY(sameOpenedIdentity(pinnedRoot, rootAfterSwap));
+    QVERIFY(removeTemporaryJunction(childPath));
+    QVERIFY(QDir().rmdir(childPath));
+    QFile preservedOutside(outsideFile);
+    QVERIFY(preservedOutside.open(QIODevice::ReadOnly));
+    QCOMPARE(preservedOutside.readAll(), sentinel);
+    QFile preservedOriginal(approved + QStringLiteral("/child-moved/original.txt"));
+    QVERIFY(preservedOriginal.open(QIODevice::ReadOnly));
+    QCOMPARE(preservedOriginal.readAll(), original);
+
+    // Research-only: synchronized two-thread substitution and rejection,
+    // NOT proof against arbitrary scheduler races, attacks on ACLs, or
+    // production restore/write safety.
+  }
+
+  void repeatedThreadedNamespaceSwapsPreserveFailClosedInspection() {
+    // Repeat six controlled two-thread changes of one directory entry.
+    // The worker alternates an ordinary child and a real NTFS junction;
+    // the reader checks the opened object after each acknowledged change.
+    // No sleeps, flaky timing assumptions, writes outside the fixture,
+    // or traversals through the junction target.
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString approved = temporary.filePath(QStringLiteral("approved"));
+    const QString childName = approved + QStringLiteral("/child");
+    const QString heldName = approved + QStringLiteral("/held-child");
+    const QString external = temporary.filePath(QStringLiteral("outside"));
+    const QString safeFile = childName + QStringLiteral("/original.txt");
+    const QString externalFile = external + QStringLiteral("/sentinel.txt");
+    const QByteArray safeBytes("ORIGINAL SYNTHETIC FILE");
+    const QByteArray outsideBytes("OUTSIDE SENTINEL NEVER MODIFIED");
+    QVERIFY(QDir().mkpath(childName));
+    QVERIFY(QDir().mkpath(external));
+    QVERIFY(writePublicBytes(safeFile, safeBytes));
+    QVERIFY(writePublicBytes(externalFile, outsideBytes));
+
+    UniqueHandle root(openNoFollow(approved, FILE_TRAVERSE |
+                                            FILE_READ_ATTRIBUTES | SYNCHRONIZE));
+    QVERIFY(root.valid());
+    ObservedObject initialRoot{}, initialChild{};
+    QVERIFY(inspectOpened(root.get(), &initialRoot));
+    QVERIFY(!candidateRejectReparse(initialRoot));
+    QVERIFY(inspectPathNoFollow(childName, &initialChild));
+    QVERIFY(!candidateRejectReparse(initialChild));
+
+    HMODULE dll = GetModuleHandleW(L"ntdll.dll");
+    QVERIFY(dll != nullptr);
+    using NtCreateFileFn = NTSTATUS (NTAPI *)(PHANDLE, ACCESS_MASK,
+        POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, PLARGE_INTEGER,
+        ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+    auto ntCreateFile = reinterpret_cast<NtCreateFileFn>(
+        GetProcAddress(dll, "NtCreateFile"));
+    QVERIFY(ntCreateFile != nullptr);
+
+    wchar_t component[] = L"child";
+    UNICODE_STRING childNameNative{};
+    childNameNative.Buffer = component;
+    childNameNative.Length = USHORT((sizeof(component) / sizeof(wchar_t) - 1)
+                                    * sizeof(wchar_t));
+    childNameNative.MaximumLength = USHORT(sizeof(component));
+    OBJECT_ATTRIBUTES attrs{};
+    attrs.Length = sizeof(attrs);
+    attrs.RootDirectory = root.get();
+    attrs.ObjectName = &childNameNative;
+    attrs.Attributes = OBJ_CASE_INSENSITIVE;
+    auto inspectRelativeChild = [&](bool shouldReject) -> bool {
+      IO_STATUS_BLOCK io{};
+      HANDLE raw = INVALID_HANDLE_VALUE;
+      constexpr ULONG kFileOpen = 1;
+      constexpr ULONG kDirectoryOnly = 0x00000001;
+      constexpr ULONG kSynchronous = 0x00000020;
+      constexpr ULONG kOpenReparse = 0x00200000;
+      const NTSTATUS status = ntCreateFile(&raw,
+          FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+          &attrs, &io, nullptr, 0,
+          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+          kFileOpen, kDirectoryOnly | kSynchronous | kOpenReparse,
+          nullptr, 0);
+      UniqueHandle opened(raw);
+      if (status < 0 || !opened.valid())
+        return false;
+      ObservedObject current{}, pinned{};
+      if (!inspectOpened(opened.get(), &current) ||
+          !inspectOpened(root.get(), &pinned) ||
+          !sameOpenedIdentity(pinned, initialRoot))
+        return false;
+      if (shouldReject)
+        return current.tag == DWORD(IO_REPARSE_TAG_MOUNT_POINT) &&
+               !sameOpenedIdentity(current, initialChild) &&
+               candidateRejectReparse(current);
+      return (current.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
+             sameOpenedIdentity(current, initialChild) &&
+             !candidateRejectReparse(current);
+    };
+
+    constexpr int kRounds = 6;
+    QSemaphore request(0), completed(0);
+    QString workerError;
+    std::thread mutator([&] {
+      for (int round = 0; round < kRounds; ++round) {
+        request.acquire(); // Normal child -> actual NTFS junction.
+        if (workerError.isEmpty()) {
+          QDir parent(approved);
+          if (!parent.rename(QStringLiteral("child"),
+                             QStringLiteral("held-child"))) {
+            workerError = QStringLiteral("Round %1: child rename failed")
+                              .arg(round + 1);
+          } else if (!QDir().mkpath(childName)) {
+            workerError = QStringLiteral("Round %1: junction directory failed")
+                              .arg(round + 1);
+          } else {
+            DWORD winError = ERROR_SUCCESS;
+            if (!createTemporaryNtfsJunction(childName, external, &winError))
+              workerError = QStringLiteral("Round %1: junction creation, Win32 %2")
+                                .arg(round + 1).arg(winError);
+          }
+        }
+        completed.release();
+
+        request.acquire(); // Junction -> original ordinary child.
+        if (workerError.isEmpty()) {
+          if (!removeTemporaryJunction(childName) ||
+              !QDir().rmdir(childName) ||
+              !QDir(approved).rename(QStringLiteral("held-child"),
+                                     QStringLiteral("child")))
+            workerError = QStringLiteral("Round %1: safe restoration failed")
+                              .arg(round + 1);
+        }
+        completed.release();
+      }
+    });
+
+    // Always join before a QVERIFY/QtTest early return. Both threads exchange
+    // an explicit semaphore for each phase; the worker cannot change the
+    // namespace while the observer holds its child handle.
+    QString readerError;
+    for (int round = 0; round < kRounds; ++round) {
+      request.release();
+      completed.acquire();
+      if (workerError.isEmpty() && readerError.isEmpty() &&
+          !inspectRelativeChild(true))
+        readerError = QStringLiteral("Round %1: junction not rejected").arg(round + 1);
+
+      request.release();
+      completed.acquire();
+      if (workerError.isEmpty() && readerError.isEmpty() &&
+          !inspectRelativeChild(false))
+        readerError = QStringLiteral("Round %1: restored child identity changed")
+                          .arg(round + 1);
+    }
+    mutator.join();
+
+    // On a fixture failure, best-effort remove a remaining junction without
+    // following it before QTemporaryDir performs its own cleanup.
+    if (!workerError.isEmpty()) {
+      ObservedObject leftover{};
+      if (inspectPathNoFollow(childName, &leftover) &&
+          candidateRejectReparse(leftover)) {
+        removeTemporaryJunction(childName);
+        QDir().rmdir(childName);
+      }
+    }
+    QVERIFY2(workerError.isEmpty(), qPrintable(workerError));
+    QVERIFY2(readerError.isEmpty(), qPrintable(readerError));
+    QFile preservedSafe(safeFile), preservedOutside(externalFile);
+    QVERIFY(preservedSafe.open(QIODevice::ReadOnly));
+    QCOMPARE(preservedSafe.readAll(), safeBytes);
+    QVERIFY(preservedOutside.open(QIODevice::ReadOnly));
+    QCOMPARE(preservedOutside.readAll(), outsideBytes);
+    // A repeatable interleaving test only; concurrent unsynchronized
+    // attackers, restore writes and hostile ACL scenarios remain unproven.
   }
 
   void openedHandleIdentitySurvivesPathReplacement() {
