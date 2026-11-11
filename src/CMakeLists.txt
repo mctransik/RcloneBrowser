@@ -7,10 +7,17 @@ set(SOURCES
   main.cpp
   main_window.cpp main_window_shell.cpp main_window.h main_window.ui
   remote_widget.cpp remote_widget.h remote_widget.ui
+  dual_pane_widget.cpp dual_pane_widget.h
+  local_browser_widget.cpp local_browser_widget.h
+  file_manager_column_delegate.h
   transfer_dialog.cpp transfer_dialog.h transfer_dialog.ui
   export_dialog.cpp export_dialog.h export_dialog.ui
   progress_dialog.cpp progress_dialog.h progress_dialog.ui
   job_widget.cpp job_widget.h job_widget.ui
+  proxy_credentials.cpp proxy_credentials.h
+  proxy_process_environment.h
+  credential_safety.h
+  log_safety.cpp log_safety.h
   mount_widget.cpp mount_widget.h mount_widget.ui
   stream_widget.cpp stream_widget.h stream_widget.ui
   preferences_dialog.cpp preferences_dialog.h preferences_dialog.ui
@@ -22,6 +29,10 @@ set(SOURCES
   utils.cpp utils.h
   job_options.cpp job_options.h
   list_of_job_options.cpp list_of_job_options.h
+  task_storage.cpp task_storage.h
+  task_list_transaction.h
+  task_secret_risk.cpp task_secret_risk.h
+  task_protection.cpp task_protection.h
   pch.h
   resources.qrc
 )
@@ -89,7 +100,7 @@ target_link_libraries(${TARGET_NAME} PRIVATE
   Qt::Core Qt::Gui Qt::Widgets Qt::Network Qt::Svg)
 
 if(WIN32)
-  target_link_libraries(${TARGET_NAME} PRIVATE shell32 ole32 dwmapi advapi32)
+  target_link_libraries(${TARGET_NAME} PRIVATE shell32 ole32 dwmapi advapi32 crypt32)
 endif()
 
 # Parser unit tests (no GUI, no rclone needed).
@@ -103,5 +114,84 @@ if(RB_BUILD_TESTS)
     target_link_libraries(test_rclone_output PRIVATE Qt::Core Qt::Test)
     set_target_properties(test_rclone_output PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME rclone_output COMMAND test_rclone_output)
+
+    add_executable(test_log_safety ../tests/test_log_safety.cpp
+                   log_safety.cpp log_safety.h)
+    target_include_directories(test_log_safety PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_log_safety PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_log_safety PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME log_safety COMMAND test_log_safety)
+
+    add_executable(test_task_storage ../tests/test_task_storage.cpp
+                   task_storage.cpp task_storage.h)
+    target_include_directories(test_task_storage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_task_storage PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_task_storage PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME task_storage COMMAND test_task_storage)
+
+    add_executable(test_task_protection ../tests/test_task_protection.cpp
+                   task_protection.cpp task_protection.h)
+    target_include_directories(test_task_protection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_task_protection PRIVATE Qt::Core Qt::Test)
+    if(WIN32)
+      target_link_libraries(test_task_protection PRIVATE crypt32)
+    endif()
+    set_target_properties(test_task_protection PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME task_protection COMMAND test_task_protection)
+
+    add_executable(test_task_secret_risk
+                   ../tests/test_task_secret_risk.cpp
+                   task_secret_risk.cpp task_secret_risk.h)
+    target_include_directories(test_task_secret_risk PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_task_secret_risk PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_task_secret_risk PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME task_secret_risk COMMAND test_task_secret_risk)
+
+    add_executable(test_task_list_transaction
+                   ../tests/test_task_list_transaction.cpp task_list_transaction.h)
+    target_include_directories(test_task_list_transaction PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_task_list_transaction PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_task_list_transaction PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME task_list_transaction COMMAND test_task_list_transaction)
+
+    add_executable(test_credential_safety ../tests/test_credential_safety.cpp credential_safety.h)
+    target_include_directories(test_credential_safety PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_credential_safety PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_credential_safety PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME credential_safety COMMAND test_credential_safety)
+
+    add_executable(proxy_env_probe ../tests/proxy_env_probe.cpp)
+    target_link_libraries(proxy_env_probe PRIVATE Qt::Core)
+    set_target_properties(proxy_env_probe PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+
+    add_executable(test_proxy_process_environment
+                   ../tests/test_proxy_process_environment.cpp
+                   proxy_process_environment.h)
+    target_include_directories(test_proxy_process_environment PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_proxy_process_environment PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_proxy_process_environment PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_dependencies(test_proxy_process_environment proxy_env_probe)
+    add_test(NAME proxy_process_environment COMMAND test_proxy_process_environment)
+
+    add_executable(test_proxy_credentials ../tests/test_proxy_credentials.cpp
+                   proxy_credentials.cpp proxy_credentials.h)
+    target_include_directories(test_proxy_credentials PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_proxy_credentials PRIVATE Qt::Core Qt::Test)
+    if(WIN32)
+      target_link_libraries(test_proxy_credentials PRIVATE advapi32)
+    endif()
+    set_target_properties(test_proxy_credentials PROPERTIES
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    # Write a machine-readable diagnostic file even when Windows QtTest
+    # cannot attach its output to the console on GitHub-hosted runners.
+    add_test(NAME proxy_credentials COMMAND test_proxy_credentials
+             -o "${CMAKE_BINARY_DIR}/tests/proxy_credentials.xml,xml")
   endif()
 endif()

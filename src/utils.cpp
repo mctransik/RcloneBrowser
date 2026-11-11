@@ -1,8 +1,10 @@
 #include "utils.h"
+#include "proxy_process_environment.h"
 
 static QString gRclone;
 static QString gRcloneConf;
 static QString gRclonePassword;
+static ProxyProcessEnvironment::Configuration gRcloneProxy;
 
 // Software versions comparison
 // source: https://helloacm.com/how-to-compare-version-numbers-in-c/
@@ -252,15 +254,26 @@ QString GetRclone() {
 void SetRclone(const QString &rclone) { gRclone = rclone.trimmed(); }
 
 void UseRclonePassword(QProcess *process) {
-  if (!gRclonePassword.isEmpty()) {
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    env.insert("RCLONE_CONFIG_PASS", gRclonePassword);
-    process->setProcessEnvironment(env);
+  // Legacy function name: this is used for the environment of rclone
+  // children, not for unrelated programs or the entire application.
+  if (gRcloneProxy.enabled || !gRclonePassword.isEmpty()) {
+    process->setProcessEnvironment(ProxyProcessEnvironment::forRclone(
+        QProcessEnvironment::systemEnvironment(), gRcloneProxy,
+        gRclonePassword));
   }
 }
 
 void SetRclonePassword(const QString &rclonePassword) {
   gRclonePassword = rclonePassword;
+}
+
+void SetRcloneProxy(bool enabled, const QString &http, const QString &https,
+                    const QString &noProxy) {
+  // Drop old in-memory credential URLs when custom proxy is switched off.
+  gRcloneProxy = enabled
+                     ? ProxyProcessEnvironment::Configuration{true, http, https,
+                                                              noProxy}
+                     : ProxyProcessEnvironment::Configuration{};
 }
 
 QStringList GetDriveSharedWithMe() {

@@ -1,6 +1,7 @@
 #include "preferences_dialog.h"
 #include "theme.h"
 #include "utils.h"
+#include "proxy_credentials.h"
 
 PreferencesDialog::PreferencesDialog(QWidget *parent) : QDialog(parent) {
   ui.setupUi(this);
@@ -170,8 +171,21 @@ PreferencesDialog::PreferencesDialog(QWidget *parent) : QDialog(parent) {
   } else {
     ui.useSystemSettings->setChecked(true);
   }
-  ui.http_proxy->setText(settings->value("Settings/http_proxy").toString());
-  ui.https_proxy->setText(settings->value("Settings/https_proxy").toString());
+  QString httpProxy, httpsProxy, proxyError;
+  if (!ProxyCredentials::load(settings.get(), "Settings/http_proxy",
+                              &httpProxy, &proxyError)) {
+    httpProxy = settings->value("Settings/http_proxy").toString();
+    ui.http_proxy->setToolTip(tr("Protected proxy credentials unavailable. "
+                                 "Re-enter authentication details to replace them."));
+  }
+  if (!ProxyCredentials::load(settings.get(), "Settings/https_proxy",
+                              &httpsProxy, &proxyError)) {
+    httpsProxy = settings->value("Settings/https_proxy").toString();
+    ui.https_proxy->setToolTip(tr("Protected proxy credentials unavailable. "
+                                  "Re-enter authentication details to replace them."));
+  }
+  ui.http_proxy->setText(httpProxy);
+  ui.https_proxy->setText(httpsProxy);
   ui.no_proxy->setText(settings->value("Settings/no_proxy").toString());
 }
 

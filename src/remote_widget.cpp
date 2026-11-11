@@ -11,7 +11,7 @@
 
 RemoteWidget::RemoteWidget(IconCache *iconCache, const QString &remote,
                            bool isLocal, bool isGoogle, QWidget *parent)
-    : QWidget(parent) {
+    : QWidget(parent), mRemote(remote) {
   ui.setupUi(this);
 
 QString root = isLocal ? "/" : QString();
@@ -55,6 +55,8 @@ QString root = isLocal ? "/" : QString();
   buildFluentUi(model, remote);
 
   QObject::connect(model, &QAbstractItemModel::layoutChanged, this, [=, this]() {
+    // The dual-pane file manager owns manual, persisted column widths.
+    if (ui.tree->property("fileManagerColumns").toBool()) return;
     ui.tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     for (int c = 1; c < model->columnCount(QModelIndex()); ++c) {
       ui.tree->resizeColumnToContents(c);
@@ -995,7 +997,7 @@ void RemoteWidget::buildFluentUi(ItemModel *model, const QString &remote) {
                          a->setChecked(!hdr->isSectionHidden(c));
                          QObject::connect(a, &QAction::toggled, this, [this, hdr, c](bool on) {
                            hdr->setSectionHidden(c, !on);
-                           if (on) {
+                           if (on && !ui.tree->property("fileManagerColumns").toBool()) {
                              ui.tree->resizeColumnToContents(c);
                            }
                            QStringList hiddenNow;
@@ -1267,4 +1269,72 @@ void RemoteWidget::applyFilter(ItemModel *model) {
   if (!text.isEmpty()) {
     ui.tree->expand(folder);
   }
+}
+
+
+// The existing tree selection is mirrored from the icon view, so these
+// helpers work in both display modes. They never change remote state.
+QString RemoteWidget::selectedRemotePath() const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  const QModelIndex selected = ui.tree->currentIndex().siblingAtColumn(0);
+  if (!model || !selected.isValid() || model->isTopLevel(selected)) return QString();
+  return mRemote + ":" + model->path(selected).path();
+}
+
+QString RemoteWidget::selectedEntryName() const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  const QModelIndex selected = ui.tree->currentIndex().siblingAtColumn(0);
+  if (!model || !selected.isValid() || model->isTopLevel(selected)) return QString();
+  return model->data(selected, Qt::DisplayRole).toString();
+}
+
+bool RemoteWidget::selectedEntryIsFolder() const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  const QModelIndex selected = ui.tree->currentIndex().siblingAtColumn(0);
+  return model && selected.isValid() && model->isFolder(selected);
+}
+
+QString RemoteWidget::currentRemoteFolder() const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  if (!model) return QString();
+  QModelIndex selected = ui.tree->currentIndex().siblingAtColumn(0);
+  if (!selected.isValid()) selected = model->index(0, 0, QModelIndex());
+  if (!selected.isValid()) return mRemote + ":";
+  if (!model->isFolder(selected)) selected = selected.parent();
+  return selected.isValid() ? mRemote + ":" + model->path(selected).path()
+                            : mRemote + ":";
+}
+
+QList<QAbstractItemView *> RemoteWidget::dragViews() const {
+  QList<QAbstractItemView *> views = {ui.tree};
+  if (mGrid) views.append(mGrid);
+  return views;
+}
+
+bool RemoteWidget::dragEntryAt(const QAbstractItemView *view,
+                                const QPoint &viewportPos, QString *path,
+                                QString *name, bool *folder) const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  if (!view || !model) return false;
+  const QModelIndex item = view->indexAt(viewportPos).siblingAtColumn(0);
+  if (!item.isValid() || model->isTopLevel(item) || model->isLoading(item))
+    return false;
+  const QString entryName = model->data(item, Qt::DisplayRole).toString();
+  if (entryName.isEmpty() || entryName == "." || entryName == "..")
+    return false;
+  *path = mRemote + ":" + model->path(item).path();
+  *name = entryName;
+  *folder = model->isFolder(item);
+  return true;
+}
+
+QString RemoteWidget::dropFolderAt(const QAbstractItemView *view,
+                                    const QPoint &viewportPos) const {
+  auto *model = qobject_cast<ItemModel *>(ui.tree->model());
+  if (!view || !model) return QString();
+  QModelIndex target = view->indexAt(viewportPos).siblingAtColumn(0);
+  if (!target.isValid()) return currentRemoteFolder();
+  if (!model->isFolder(target)) target = target.parent();
+  if (!target.isValid() || model->isTopLevel(target)) return mRemote + ":";
+  return mRemote + ":" + model->path(target).path();
 }

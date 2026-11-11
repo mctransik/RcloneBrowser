@@ -7,6 +7,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Approved rclone build inputs: change only after reviewing a new upstream release.
+# Both platforms must use exactly the same version and their own expected ZIP digest.
+env:
+  RCLONE_VERSION: v1.75.2
+  RCLONE_WINDOWS_ZIP_SHA256: 8a9db2bad1dc79a65b3348fd857069598e2aab7cf4d118b77b1df23055aff818
+  RCLONE_LINUX_ZIP_SHA256: 349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702
+
 # Least privilege: read-only unless a step needs more.
 permissions:
   contents: read
@@ -49,7 +56,18 @@ jobs:
           call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release || exit /b 1
           cmake --build build || exit /b 1
-          ctest --test-dir build --output-on-failure || exit /b 1
+          REM Verbose CTest output is required to diagnose Windows
+          REM credential-manager behavior on GitHub-hosted logon sessions.
+          REM The tests use only disposable dummy proxy addresses.
+          ctest --test-dir build --output-on-failure --verbose
+          if errorlevel 1 (
+            if exist build\tests\proxy_credentials.xml type build\tests\proxy_credentials.xml
+            exit /b 1
+          )
+          REM Print success and skip status too: QtTest skips count as a passed
+          REM CTest process, but a skipped Credential Manager test is not proof
+          REM that the Windows credential store was exercised.
+          if exist build\tests\proxy_credentials.xml type build\tests\proxy_credentials.xml
 
       - name: Assemble app folder
         shell: pwsh
@@ -93,13 +111,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "PGP verifier unit tests failed" }
 
           # Bundle official rclone after PGP SIGNATURE + SHA256 both pass.
-          $tag = (Invoke-WebRequest -Uri https://downloads.rclone.org/version.txt -UseBasicParsing).Content.Trim() -replace '^rclone\s+',''
-          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "Invalid official rclone version" }
+          $tag = $env:RCLONE_VERSION
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "Invalid pinned rclone version" }
           $zip = "rclone-$tag-windows-amd64.zip"
           Invoke-WebRequest "https://downloads.rclone.org/$tag/$zip" -OutFile $zip
           Invoke-WebRequest "https://downloads.rclone.org/$tag/SHA256SUMS" -OutFile SHA256SUMS
           python scripts/verify_rclone_release.py --archive $zip --sums SHA256SUMS --key security/rclone-signing-key.asc --gpg $gpg
           if ($LASTEXITCODE -ne 0) { throw "rclone PGP verification failed. Aborting build." }
+          $actualZipSha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualZipSha -ne $env:RCLONE_WINDOWS_ZIP_SHA256) {
+            throw "Pinned Windows rclone ZIP SHA-256 does not match; refusing build."
+          }
           Expand-Archive $zip -DestinationPath rclone-x
           New-Item -ItemType Directory -Force "$dir\rclone" | Out-Null
           Copy-Item (Get-ChildItem rclone-x -Recurse -Filter rclone.exe).FullName "$dir\rclone\"
@@ -118,6 +140,39 @@ jobs:
           Copy-Item docs\remote-icons.md "$dir\icons\remotes\README.md"
           New-Item -ItemType Directory -Force "$dir\docs" | Out-Null
           Copy-Item README.md, LICENSE, CHANGELOG.md, docs\Rclone-Browser-Guide.pdf "$dir\docs\"
+          # Bundle exact upstream copyright/license texts before hashing.
+          Copy-Item third_party\licenses\rclone-v1.75.2-COPYING.txt "$dir\docs\RCLONE_LICENSE.txt"
+          Copy-Item src\icons\fluent\LICENSE.txt "$dir\docs\FLUENT_UI_SYSTEM_ICONS_LICENSE.txt"
+          Copy-Item docs\THIRD_PARTY_NOTICES.md "$dir\docs\THIRD_PARTY_NOTICES.md"
+          python scripts/verify_third_party_notices.py --source-dir . --notice-dir "$dir/docs" --rclone-version "$tag"
+          if ($LASTEXITCODE -ne 0) { throw "Third-party license notice verification failed." }
+
+          # Build provenance is informational, not a malware verdict or signature.
+          $sourceCommit = (git rev-parse HEAD).Trim()
+          @(
+            "source_commit=$sourceCommit"
+            "github_run_id=$env:GITHUB_RUN_ID"
+            "github_run_attempt=$env:GITHUB_RUN_ATTEMPT"
+            "rclone_version=$tag"
+            "rclone_archive=$zip"
+            "rclone_archive_sha256=$actualZipSha"
+            "qt_version=6.10.3"
+          ) | Set-Content -Encoding utf8 "$dir\docs\BUILD_PROVENANCE.txt"
+
+          # Hash every payload file except the self-referential manifest.
+          $root = (Resolve-Path -LiteralPath $dir).Path
+          $hashLines = @(Get-ChildItem -LiteralPath $dir -Recurse -File |
+            Sort-Object FullName | ForEach-Object {
+              $relative = [System.IO.Path]::GetRelativePath($root, $_.FullName).Replace('\', '/')
+              $digest = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$digest  $relative"
+            })
+          $hashLines | Set-Content -Encoding ascii "$dir\docs\PACKAGE_SHA256SUMS.txt"
+
+          # Fail closed on unexpected payload files, private-key markers,
+          # and package checksum mismatches before any artifact is uploaded.
+          python scripts/audit_release_payload.py --package-dir "$dir"
+          if ($LASTEXITCODE -ne 0) { throw "Windows package inventory/security check failed." }
 
           # Smoke test of the packaged folder: the app must start with this
           # layout (platform plugin via qt.conf, image formats, TLS).
@@ -129,16 +184,266 @@ jobs:
           Compress-Archive "$dir" "dist\RcloneBrowser-$ver-windows-x64.zip"
           "VERSION=$ver" | Out-File -Append $env:GITHUB_ENV
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      # Diagnostic is kept OUTSIDE the ZIP; signed components must verify.
+      # Unsigned project/rclone executables are recorded, not auto-whitelisted
+      # as trustworthy. Invalid signatures block staging and promotion.
+      - name: Audit Windows Authenticode signatures and component metadata
+        shell: pwsh
+        run: |
+          ./scripts/windows_authenticode_audit.ps1 `
+            -PackageDir "dist/RcloneBrowser" `
+            -ReportDir "dist/security/authenticode"
+
+      # Validate identity of each EXE/DLL after Windows Authenticode audit.
+      # Compare real package bytes and versions with the signed-file CSV.
+      - name: Verify Windows dependency publishers and versions
+        shell: pwsh
+        run: |
+          $ver = (Get-Content VERSION -First 1).Trim()
+          python scripts/audit_windows_dependencies.py `
+            --package-dir "dist/RcloneBrowser" `
+            --authenticode-csv "dist/security/authenticode/windows-authenticode-files.csv" `
+            --app-version "$ver" `
+            --qt-version "6.10.3" `
+            --rclone-version "$env:RCLONE_VERSION" `
+            --output "dist/security/dependency-inventory/windows-dependencies.json"
+          if ($LASTEXITCODE -ne 0) { throw "Windows binary dependency identity check failed." }
+
+      # Report stays outside distributed ZIP. Failed gate blocks staging.
+      - name: Upload Windows dependency inventory (text only)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-dependency-inventory
+          path: dist/security/dependency-inventory/
+          if-no-files-found: ignore
+
+      # Inventory exact packaged bytes AFTER signer/PE version review.
+      # SBOM is intentionally outside the distributable ZIP, and licenses
+      # requiring legal review are never guessed or marked compliant.
+      - name: Generate preliminary CycloneDX Windows SBOM
+        shell: pwsh
+        run: |
+          $ver = (Get-Content VERSION -First 1).Trim()
+          python scripts/generate_windows_sbom.py `
+            --package-dir "dist/RcloneBrowser" `
+            --binary-inventory "dist/security/dependency-inventory/windows-dependencies.json" `
+            --source-commit "$env:GITHUB_SHA" `
+            --app-version "$ver" `
+            --qt-version "6.10.3" `
+            --rclone-version "$env:RCLONE_VERSION" `
+            --output "dist/security/sbom/windows-preliminary.cdx.json"
+          if ($LASTEXITCODE -ne 0) { throw "Windows SBOM integrity/coverage check failed." }
+
+      # Verify official CycloneDX 1.6 schema and its two external references.
+      # Pin Git commit AND all three Git blob hashes; no new URLs may be
+      # fetched while the schema is evaluated. Fail closed on validation.
+      - name: Validate Windows SBOM against pinned official CycloneDX 1.6 schemas
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sourceCommit = "ad83dae28b236b8760286399da4daba77592de86"
+          $schemaDir = "dist/security/sbom/schema-reference"
+          New-Item -ItemType Directory -Force $schemaDir | Out-Null
+          foreach ($file in @("bom-1.6.schema.json", "spdx.schema.json", "jsf-0.82.schema.json")) {
+            $url = "https://raw.githubusercontent.com/CycloneDX/specification/$sourceCommit/schema/$file"
+            Invoke-WebRequest -Uri $url -OutFile "$schemaDir/$file"
+          }
+          python -m pip install --disable-pip-version-check "jsonschema==4.25.1"
+          if ($LASTEXITCODE -ne 0) { throw "Pinned CycloneDX validation dependency install failed." }
+          python scripts/validate_cyclonedx_schema.py `
+            --schemas-dir $schemaDir `
+            --bom "dist/security/sbom/windows-preliminary.cdx.json"
+          if ($LASTEXITCODE -ne 0) { throw "Official CycloneDX schema validation failed." }
+          python -m unittest discover -s scripts/tests -p test_validate_cyclonedx_schema.py -v
+          if ($LASTEXITCODE -ne 0) { throw "CycloneDX schema validation tests failed." }
+      - name: Upload Windows preliminary SBOM (text only)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-preliminary-cyclonedx-sbom
+          path: dist/security/sbom/*.cdx.json
+          if-no-files-found: ignore
+
+      # Keep text evidence even when a signature check fails. Never upload
+      # executables inside the audit report; ZIP SHA256 is unaffected.
+      - name: Upload Windows Authenticode report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-authenticode-audit
+          path: dist/security/authenticode/
+          if-no-files-found: ignore
+
+      # This artifact is NOT security-cleared. It exists only to allow the
+      # separate Linux ClamAV job to inspect the exact Windows files.
+      # Do not use or distribute this staging artifact.
+      - name: Stage Windows payload for malware scan (UNSCANNED)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: UNSCANNED-windows-build-inputs
+          path: |
+            dist/RcloneBrowser/
+            dist/*.zip
+          if-no-files-found: error
+
+  windows_malware_scan:
+    name: Windows package malware scan (ClamAV)
+    # GitHub-hosted Windows currently has Defender in a non-active mode.
+    # Scan the UNSCANNED Windows staging artifact on a separate Ubuntu runner.
+    # No Windows package with a final artifact name exists before this passes.
+    needs: [windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Retrieve Windows staging payload (UNSCANNED)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: UNSCANNED-windows-build-inputs
+          path: staging
+
+      - name: Install ClamAV and refresh official signatures
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q clamav clamav-freshclam
+          # Avoid lock contention from Ubuntu's automatic freshclam daemon.
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo freshclam --stdout
+          clamscan --version
+
+      - name: Scan Windows staged application and release ZIP
+        run: |
+          set -euo pipefail
+          mkdir -p security
+          ver="$(head -1 VERSION | tr -d '[:space:]')"
+          test -n "$ver"
+          test -f "staging/RcloneBrowser/RcloneBrowser.exe"
+          test -f "staging/RcloneBrowser/rclone/rclone.exe"
+          test -f "staging/RcloneBrowser-$ver-windows-x64.zip"
+          test "$(find staging/RcloneBrowser -type f -iname '*.dll' | wc -l)" -gt 0
+          # A full Qt Windows ZIP is larger than ClamAV's default per-file
+          # limits. Raise bounded scan limits so bundled libraries are scanned.
+          # Scanner errors and signature-age failures block promotion.
+          clamscan --recursive --infected --fail-if-cvd-older-than=3 --max-filesize=200M --max-scansize=500M --max-recursion=20 --max-files=20000 --log=security/clamav.log \
+            "staging/RcloneBrowser" "staging/RcloneBrowser-$ver-windows-x64.zip"
+          sha256sum "staging/RcloneBrowser-$ver-windows-x64.zip" | tee security/windows-zip.sha256
+          echo "source_commit=$GITHUB_SHA" | tee security/source_commit.txt
+          echo "github_run_id=$GITHUB_RUN_ID" | tee -a security/source_commit.txt
+          echo "scanner=ClamAV on ubuntu-24.04" | tee -a security/source_commit.txt
+          echo "VERSION=$ver" >> "$GITHUB_ENV"
+
+      - name: Upload scan diagnostic
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: clamav-windows-scan-report
+          path: security/
+          if-no-files-found: ignore
+
+      # Only these artifacts are considered eligible for manual evaluation.
+      # Passing ClamAV is NOT a malware-free certification or release approval.
+      - name: Promote scanned Windows application folder
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: RcloneBrowser-${{ env.VERSION }}-windows-x64
-          path: dist/RcloneBrowser
+          path: staging/RcloneBrowser/
+          if-no-files-found: error
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Promote scanned Windows release archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-windows
-          path: dist/*.zip
+          path: staging/RcloneBrowser-${{ env.VERSION }}-windows-x64.zip
           if-no-files-found: error
+
+  windows_provenance:
+    name: Attest and independently verify scanned Windows ZIP (development only)
+    # Keep write-capable OIDC credentials out of normal builds and all PRs.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/cloud-control-ui-mvp' }}
+    needs: [windows_malware_scan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Retrieve only ClamAV-promoted Windows ZIP
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-windows
+          path: provenance-input
+
+      - name: Retrieve original scan checksum
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: clamav-windows-scan-report
+          path: security-scan-report
+
+      - name: Unit-test scan-to-attestation hash handoff
+        run: python3 -m unittest discover -s scripts/tests -p test_verify_windows_scanned_artifact.py -v
+
+      - name: Verify exact scanned ZIP bytes and record digest
+        run: |
+          set -euo pipefail
+          ver="$(head -1 VERSION | tr -d '[:space:]')"
+          archive="provenance-input/RcloneBrowser-${ver}-windows-x64.zip"
+          test "$(find provenance-input -maxdepth 1 -type f | wc -l)" -eq 1
+          python3 scripts/verify_windows_scanned_artifact.py \
+            --checksum security-scan-report/windows-zip.sha256 \
+            --archive "$archive"
+          mkdir -p provenance-report
+          sha256sum "$archive" | tee provenance-report/attested-windows-zip.sha256
+          printf "source_commit=%s\nsource_ref=%s\nworkflow_run_id=%s\nscan_job_status=success\n" \
+            "$GITHUB_SHA" "$GITHUB_REF" "$GITHUB_RUN_ID" > provenance-report/attestation-source.txt
+
+      # Default SLSA build-provenance predicate via short-lived GitHub OIDC
+      # identity, not an Authenticode signature or malware-safety certificate.
+      - name: Generate GitHub provenance attestation for scanned ZIP
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
+        with:
+          subject-path: provenance-input/*.zip
+
+      - name: Independently verify attestation and source identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh --version
+          ver="$(head -1 VERSION | tr -d '[:space:]')"
+          archive="provenance-input/RcloneBrowser-${ver}-windows-x64.zip"
+          # The named workflow, source ref and exact source commit are required.
+          # The command cryptographically verifies the identity and subject hash.
+          gh attestation verify "$archive" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/update.yml" \
+            --source-ref "$GITHUB_REF" \
+            --source-digest "$GITHUB_SHA" \
+            --format json > provenance-report/verified-attestation.json
+          printf "verification=passed\nexpected_workflow=.github/workflows/update.yml\n" \
+            >> provenance-report/attestation-source.txt
+          echo "Verified SLSA attestation for exact scanned Windows archive."
+
+      - name: Upload Windows provenance verification evidence (text only)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-provenance-verification
+          path: provenance-report/
+          if-no-files-found: ignore
+
 
   linux:
     name: Linux
@@ -205,14 +510,27 @@ jobs:
 
           # Never package an archive without upstream PGP signature verification.
           python3 -m unittest discover -s scripts/tests -v
-          tag=$(curl -fsSL https://downloads.rclone.org/version.txt | sed 's/^rclone //' | tr -d '[:space:]')
-          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid rclone version"; exit 1; }
+          tag="$RCLONE_VERSION"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid pinned rclone version"; exit 1; }
           zip="rclone-$tag-linux-amd64.zip"
           curl -fsSLO "https://downloads.rclone.org/$tag/$zip"
           curl -fsSLO "https://downloads.rclone.org/$tag/SHA256SUMS"
           python3 scripts/verify_rclone_release.py --archive "$zip" --sums SHA256SUMS --key security/rclone-signing-key.asc
+          echo "$RCLONE_LINUX_ZIP_SHA256  $zip" | sha256sum -c -
           python3 -m zipfile -e "$zip" rclone-x
           install -m 755 "$(find rclone-x -name rclone -type f | head -1)" AppDir/usr/bin/rclone
+
+          # Preserve original rclone/Fluent notices in the Linux AppDir.
+          cp third_party/licenses/rclone-v1.75.2-COPYING.txt AppDir/usr/share/rclone-browser/RCLONE_LICENSE.txt
+          cp src/icons/fluent/LICENSE.txt AppDir/usr/share/rclone-browser/FLUENT_UI_SYSTEM_ICONS_LICENSE.txt
+          cp docs/THIRD_PARTY_NOTICES.md AppDir/usr/share/rclone-browser/THIRD_PARTY_NOTICES.md
+          python3 scripts/verify_third_party_notices.py --source-dir . --notice-dir AppDir/usr/share/rclone-browser --rclone-version "$tag"
+
+          # Embed traceability in the AppImage (not an independent trust seal).
+          printf 'source_commit=%s\ngithub_run_id=%s\ngithub_run_attempt=%s\nrclone_version=%s\nrclone_archive=%s\nrclone_archive_sha256=%s\nqt_version=6.10.3\n' \
+            "$(git rev-parse HEAD)" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            "$tag" "$zip" "$RCLONE_LINUX_ZIP_SHA256" \
+            > AppDir/usr/share/rclone-browser/BUILD_PROVENANCE.txt
 
           QMAKE="$QT_ROOT_DIR/bin/qmake" LINUXDEPLOY_OUTPUT_VERSION="$ver" \
             ./linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage
@@ -229,10 +547,67 @@ jobs:
           path: dist/*.AppImage
           if-no-files-found: error
 
+  historical_windows_security:
+    name: Historical Windows malware investigation (ClamAV)
+    # Manual and development-branch only. No write permission or releases.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/cloud-control-ui-mvp' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install ClamAV and refresh official signature database
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q clamav clamav-freshclam
+          sudo systemctl stop clamav-freshclam.service || true
+          sudo freshclam --stdout
+          clamscan --version
+
+      - name: Unit-test Windows binary hash reporting
+        run: python3 -m unittest discover -s scripts/tests -p test_historical_artifact_hashes.py -v
+
+      - name: Verify exact historical GitHub Actions ZIPs without execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/audit_historical_windows_artifacts.py
+
+      - name: Scan historical Windows ZIPs and extracted files
+        run: |
+          set -euo pipefail
+          clamscan --recursive --infected --fail-if-cvd-older-than=3 \
+            --max-filesize=200M --max-scansize=500M --max-recursion=20 \
+            --max-files=20000 --log=historical-reports/clamav-historical.log \
+            historical-scan-inputs
+          clamscan --version | tee historical-reports/clamav-version.txt
+          echo "result=no_detections_reported" | tee historical-reports/scan-result.txt
+          echo "source_commit=$GITHUB_SHA" >> historical-reports/scan-result.txt
+          echo "run_id=$GITHUB_RUN_ID" >> historical-reports/scan-result.txt
+
+      # Report only: historical binaries are not uploaded a second time.
+      - name: Upload historical artifact investigation report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: historical-windows-malware-investigation
+          path: historical-reports/
+          if-no-files-found: ignore
+
   release:
-    name: Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux]
+    name: Release (disabled during security review)
+    # FAIL CLOSED: no tag, dispatch, or PR may publish until the manual
+    # release-approval and signing policy is implemented and reviewed.
+    # Former condition: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }}
+    needs: [windows, linux, windows_malware_scan]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
