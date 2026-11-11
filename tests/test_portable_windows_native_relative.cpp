@@ -336,6 +336,96 @@ class WindowsNativeRelativeResearch : public QObject {
                "Protected stage unexpectedly has an inherited ACE");
     }
 
+    // Restricted-token read access: the same test account is impersonated
+    // with its user SID set to DENY-ONLY and all privileges disabled.
+    // This exercises a *real* OS file-open access check, not just an ACL
+    // snapshot or offline Authz calculation. It does NOT simulate a second
+    // independent Windows user, same-token malware, or an administrator.
+    HANDLE baseTokenRaw = nullptr;
+    QVERIFY2(OpenProcessToken(GetCurrentProcess(),
+                              TOKEN_DUPLICATE | TOKEN_QUERY,
+                              &baseTokenRaw),
+             "Could not open process token for isolated read-access probe");
+    Handle baseToken(baseTokenRaw);
+    SID_AND_ATTRIBUTES disabledUser{};
+    disabledUser.Sid = userSid;
+    disabledUser.Attributes = 0; // Ignored by CreateRestrictedToken
+    HANDLE restrictedRaw = nullptr;
+    QVERIFY2(CreateRestrictedToken(baseToken.get(), DISABLE_MAX_PRIVILEGE,
+                                   1, &disabledUser, 0, nullptr,
+                                   0, nullptr, &restrictedRaw),
+             "Could not construct restricted disposable test token");
+    Handle restrictedToken(restrictedRaw);
+
+    HANDLE impersonationRaw = nullptr;
+    QVERIFY2(DuplicateTokenEx(restrictedToken.get(),
+                              TOKEN_QUERY | TOKEN_IMPERSONATE,
+                              nullptr, SecurityImpersonation,
+                              TokenImpersonation, &impersonationRaw),
+             "Could not create restricted impersonation token");
+    Handle impersonationToken(impersonationRaw);
+
+    // With the disabled user SID, ordinary path traversal of the runner's
+    // Temp profile may fail for unrelated reasons. Open ONLY a single child
+    // relative to the already pinned synthetic parent: distinguish the
+    // child's DACL from unrelated profile directory permissions.
+    auto restrictedOpenRelative = [&](wchar_t* leafName,
+                                       HANDLE* returned) -> NTSTATUS {
+      UNICODE_STRING name{};
+      name.Buffer = leafName;
+      name.Length = USHORT(std::wcslen(leafName) * sizeof(wchar_t));
+      name.MaximumLength = USHORT(name.Length + sizeof(wchar_t));
+      OBJECT_ATTRIBUTES attrs{};
+      attrs.Length = sizeof(attrs);
+      attrs.RootDirectory = parent.get();
+      attrs.ObjectName = &name;
+      attrs.Attributes = OBJ_CASE_INSENSITIVE;
+      IO_STATUS_BLOCK io{};
+      constexpr ULONG kOpenExisting = 1; // Native FILE_OPEN
+      return nativeCreate(returned, FILE_READ_DATA | SYNCHRONIZE,
+                          &attrs, &io, nullptr, 0,
+                          FILE_SHARE_READ | FILE_SHARE_WRITE |
+                              FILE_SHARE_DELETE,
+                          kOpenExisting, kSync | kOrdinaryFile | kNoFollow,
+                          nullptr, 0);
+    };
+
+    // Always restore original thread identity before any Qt verification,
+    // including test failures. This scope guard covers early returns.
+    struct RevertThreadToken {
+      bool active = false;
+      ~RevertThreadToken() { if (active) RevertToSelf(); }
+    } revertThread;
+    QVERIFY2(SetThreadToken(nullptr, impersonationToken.get()),
+             "Failed to impersonate restricted test token");
+    revertThread.active = true;
+
+    HANDLE inheritedAttemptRaw = INVALID_HANDLE_VALUE;
+    HANDLE protectedAttemptRaw = INVALID_HANDLE_VALUE;
+    const NTSTATUS inheritedReadStatus =
+        restrictedOpenRelative(inheritedName, &inheritedAttemptRaw);
+    const NTSTATUS protectedReadStatus =
+        restrictedOpenRelative(protectedName, &protectedAttemptRaw);
+    const BOOL identityRestored = RevertToSelf();
+    if (identityRestored)
+      revertThread.active = false;
+    Handle inheritedAttempt(inheritedAttemptRaw);
+    Handle protectedAttempt(protectedAttemptRaw);
+    QVERIFY2(identityRestored,
+             "CRITICAL: failed to restore original test-thread identity");
+    QVERIFY2(inheritedReadStatus >= 0 && inheritedAttempt.valid(),
+             qPrintable(QStringLiteral(
+                 "Control: inherited BUILTIN Users access should succeed, "
+                 "NTSTATUS 0x%1")
+                 .arg(quint32(inheritedReadStatus), 8, 16,
+                      QLatin1Char('0'))));
+    QVERIFY2(protectedReadStatus < 0 && !protectedAttempt.valid(),
+             "Protected staged file unexpectedly opened for restricted token");
+    // NTSTATUS STATUS_ACCESS_DENIED: verify the denial was ACL-related, not
+    // a missing file, invalid native parameter, or unrelated failure.
+    constexpr NTSTATUS kStatusAccessDenied = NTSTATUS(0xC0000022L);
+    QCOMPARE(protectedReadStatus, kStatusAccessDenied);
+
     const QByteArray publicBytes("PUBLIC STAGE ACL CHECK");
     DWORD written = 0;
     QVERIFY(WriteFile(protectedFile.get(), publicBytes.constData(),
@@ -351,9 +441,10 @@ class WindowsNativeRelativeResearch : public QObject {
     QFile outside(outsidePath);
     QVERIFY(outside.open(QIODevice::ReadOnly));
     QCOMPARE(outside.readAll(), outsideBytes);
-    // An actual second-user access-denied test, same-token interference,
-    // ACL changes while writing, power-loss persistence and secret plaintext
-    // security remain OPEN; no production ACL policy approval is implied.
+    // This is a restricted SAME-USER impersonation probe, not an independent
+    // second-account test. Same-token interference, ACL changes while writing,
+    // power-loss persistence and real secret plaintext security remain OPEN.
+    // No production ACL-policy approval is implied.
   }
 
   void nativeCreateNewStageIsBoundToPinnedDirectory() {
