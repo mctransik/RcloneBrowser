@@ -1,4 +1,5 @@
 #include "main_window.h"
+#include "rclone_args.h"
 #include "theme.h"
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -937,7 +938,7 @@ void MainWindow::addMount(const QString &remote, const QString &folder) {
 
   args.append(GetRcloneConf());
   if (!opt.isEmpty()) {
-    args.append(opt.split(' '));
+    args.append(RcloneArgs::splitOptions(opt));
   }
   args << remote << folder;
 

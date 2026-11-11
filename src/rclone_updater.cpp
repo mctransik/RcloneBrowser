@@ -1,4 +1,5 @@
 #include "rclone_updater.h"
+#include "update_check.h"
 #include "utils.h"
 
 namespace {
@@ -89,24 +90,7 @@ void RcloneUpdater::cleanup() {
 }
 
 int RcloneUpdater::compareVersions(const QString &a, const QString &b) {
-  static const QRegularExpression rx(R"((\d+)(?:\.(\d+))?(?:\.(\d+))?)");
-  auto parts = [](const QString &v) {
-    QList<int> out{0, 0, 0};
-    auto m = rx.match(v);
-    if (m.hasMatch()) {
-      for (int i = 0; i < 3; ++i) {
-        out[i] = m.captured(i + 1).toInt();
-      }
-    }
-    return out;
-  };
-  const auto pa = parts(a), pb = parts(b);
-  for (int i = 0; i < 3; ++i) {
-    if (pa[i] != pb[i]) {
-      return pa[i] < pb[i] ? -1 : 1;
-    }
-  }
-  return 0;
+  return UpdateCheck::compareVersions(a, b);
 }
 
 QString RcloneUpdater::platformSuffix() {
@@ -182,14 +166,13 @@ void RcloneUpdater::checkFrom(int i) {
       fail(QString());
       return;
     }
-    static const QRegularExpression rx(R"(v\d+\.\d+\.\d+)");
     QString version;
     if (reply->error() == QNetworkReply::NoError) {
       // version.txt contains "rclone v1.75.1"; the GitHub page redirects to
       // .../releases/tag/v1.75.1
       const QString text = useRedirect ? reply->url().toString()
                                        : QString::fromUtf8(reply->readAll());
-      version = rx.match(text).captured(0);
+      version = UpdateCheck::findVersionTag(text);
     }
     if (version.isEmpty()) {
       checkFrom(i + 1);
@@ -208,8 +191,7 @@ void RcloneUpdater::install(const QString &version) {
   }
 
   // Fail closed: only a stable version may be selected.
-  static const QRegularExpression kStable(R"(^v[0-9]+\.[0-9]+\.[0-9]+$)");
-  if (!kStable.match(version).hasMatch()) {
+  if (!UpdateCheck::isStableVersionTag(version)) {
     emit failed(tr("Invalid stable rclone version: %1").arg(version));
     return;
   }
@@ -234,14 +216,11 @@ void RcloneUpdater::install(const QString &version) {
   QProcessEnvironment childEnv = QProcessEnvironment::systemEnvironment();
   const auto settings = GetSettings();
   if (settings->value("Settings/useProxy").toBool()) {
-    QString proxyText = settings->value("Settings/https_proxy").toString().trimmed();
-    if (proxyText.isEmpty()) {
-      proxyText = settings->value("Settings/http_proxy").toString().trimmed();
-    }
-    const QUrl proxy(proxyText);
-    if (!proxy.isValid() || proxy.host().isEmpty() ||
-        (proxy.scheme() != QLatin1String("http") &&
-         proxy.scheme() != QLatin1String("https"))) {
+    bool invalidProxy = false;
+    const QUrl proxy = UpdateCheck::updaterProxy(
+        true, settings->value("Settings/https_proxy").toString(),
+        settings->value("Settings/http_proxy").toString(), &invalidProxy);
+    if (invalidProxy) {
       emit failed(tr("The configured HTTP(S) proxy URL is invalid. "
                      "No update was attempted."));
       return;
@@ -313,8 +292,7 @@ void RcloneUpdater::install(const QString &version) {
               // rclone selfupdate exits successfully *without writing --output*
               // when the selected version is already running.
               const bool upToDate =
-                  (details + standardOutput).contains(
-                      "rclone is up to date", Qt::CaseInsensitive);
+                  UpdateCheck::reportsUpToDate(details + standardOutput);
               if (upToDate) {
                 if (QFileInfo(updaterExe).canonicalFilePath() ==
                         QFileInfo(managedPath()).canonicalFilePath() &&
@@ -336,8 +314,7 @@ void RcloneUpdater::install(const QString &version) {
           });
 
   // No shell is used: arguments are passed directly to the rclone process.
-  p->start(updaterExe, {"selfupdate", "--stable", "--version", version,
-                        "--output", output});
+  p->start(updaterExe, UpdateCheck::selfupdateArguments(version, output));
 }
 
 void RcloneUpdater::finishInstall(const QString &version,

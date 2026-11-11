@@ -1,4 +1,5 @@
 #include "job_options.h"
+#include "rclone_args.h"
 #include "utils.h"
 #include <qexception.h>
 #include <qlogging.h>
@@ -134,9 +135,7 @@ QStringList JobOptions::getOptions() const {
   }
 
   if (!extra.isEmpty()) {
-    for (auto arg : extra.split(' ')) {
-      list << arg;
-    }
+    list << RcloneArgs::splitOptions(extra);
   }
 
   if (DriveSharedWithMe) {

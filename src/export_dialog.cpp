@@ -1,4 +1,5 @@
 #include "export_dialog.h"
+#include "rclone_args.h"
 #include "utils.h"
 
 ExportDialog::ExportDialog(const QString &remote, const QDir &path,
@@ -85,9 +86,7 @@ QStringList ExportDialog::getOptions() const {
 
   QString extra = ui.textExtra->text().trimmed();
   if (!extra.isEmpty()) {
-    for (auto arg : extra.split(' ')) {
-      list << arg;
-    }
+    list << RcloneArgs::splitOptions(extra);
   }
 
   list << mTarget;

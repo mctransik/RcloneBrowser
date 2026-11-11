@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "rclone_args.h"
 
 static QString gRclone;
 static QString gRcloneConf;
@@ -279,9 +280,7 @@ QStringList GetDefaultRcloneOptionsList() {
       settings->value("Settings/defaultRcloneOptions").toString();
   QStringList defaultRcloneOptionsList;
   if (!defaultRcloneOptions.isEmpty()) {
-    for (auto arg : defaultRcloneOptions.split(' ')) {
-      defaultRcloneOptionsList << arg;
-    }
+    defaultRcloneOptionsList = RcloneArgs::splitOptions(defaultRcloneOptions);
   }
   return defaultRcloneOptionsList;
 }

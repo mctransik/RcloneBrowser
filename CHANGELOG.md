@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Extra rclone options (transfer/export dialogs, default options, mount options) are now split like a command line: repeated spaces no longer produce empty arguments that rclone treats as an extra source or destination, and values with spaces can be quoted, e.g. `--exclude "My Files/**"`.
+
+### Tests
+- The signed-update decision rules (stable-tag check, `selfupdate` arguments, proxy validation, "up to date" detection, version comparison) moved into a GUI-free module with unit tests. Behaviour is unchanged.
+
 ## [4.0.2] - 2026-10-10 (RC1 security test build)
 
 ### Security

@@ -17,6 +17,8 @@ set(SOURCES
   icon_cache.cpp icon_cache.h
   item_model.cpp item_model.h
   rclone_output.cpp rclone_output.h
+  rclone_args.cpp rclone_args.h
+  update_check.cpp update_check.h
   rclone_updater.cpp rclone_updater.h
   theme.cpp theme.h
   utils.cpp utils.h
@@ -92,7 +94,7 @@ if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE shell32 ole32 dwmapi advapi32)
 endif()
 
-# Parser unit tests (no GUI, no rclone needed).
+# Unit tests (no GUI, no network, no rclone needed).
 option(RB_BUILD_TESTS "Build unit tests" ON)
 if(RB_BUILD_TESTS)
   find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Test)
@@ -103,5 +105,17 @@ if(RB_BUILD_TESTS)
     target_link_libraries(test_rclone_output PRIVATE Qt::Core Qt::Test)
     set_target_properties(test_rclone_output PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     add_test(NAME rclone_output COMMAND test_rclone_output)
+
+    add_executable(test_update_check ../tests/test_update_check.cpp update_check.cpp update_check.h)
+    target_include_directories(test_update_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_update_check PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_update_check PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME update_check COMMAND test_update_check)
+
+    add_executable(test_rclone_args ../tests/test_rclone_args.cpp rclone_args.cpp rclone_args.h)
+    target_include_directories(test_rclone_args PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test_rclone_args PRIVATE Qt::Core Qt::Test)
+    set_target_properties(test_rclone_args PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+    add_test(NAME rclone_args COMMAND test_rclone_args)
   endif()
 endif()
