@@ -4,9 +4,10 @@
 
 ### Fixed
 - Extra rclone options (transfer/export dialogs, default options, mount options) are now split like a command line: repeated spaces no longer produce empty arguments that rclone treats as an extra source or destination, and values with spaces can be quoted, e.g. `--exclude "My Files/**"`.
+- The stable-version check before a signed update no longer accepts a version followed by a line break (`"v1.75.1\n"`); it now requires the exact form `vX.Y.Z`.
 
 ### Tests
-- The signed-update decision rules (stable-tag check, `selfupdate` arguments, proxy validation, "up to date" detection, version comparison) moved into a GUI-free module with unit tests. Behaviour is unchanged.
+- The signed-update decision rules (stable-tag check, `selfupdate` arguments, proxy validation, "up to date" detection, version comparison) moved into a GUI-free module with unit tests. Apart from the fix above, behaviour is unchanged.
 
 ## [4.0.2] - 2026-10-10 (RC1 security test build)
 

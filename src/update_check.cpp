@@ -32,7 +32,10 @@ QString findVersionTag(const QString &text) {
 }
 
 bool isStableVersionTag(const QString &version) {
-  static const QRegularExpression rx(R"(^v[0-9]+\.[0-9]+\.[0-9]+$)");
+  // anchoredPattern() matches the whole string. A plain "^...$" would also
+  // accept a trailing newline ("v1.75.1\n"), because "$" matches before it.
+  static const QRegularExpression rx(
+      QRegularExpression::anchoredPattern(R"(v[0-9]+\.[0-9]+\.[0-9]+)"));
   return rx.match(version).hasMatch();
 }
 
