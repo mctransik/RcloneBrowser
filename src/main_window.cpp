@@ -834,6 +834,34 @@ void MainWindow::listTasks() {
         jo->description);
     ui.tasksListWidget->addItem(item);
   }
+
+  // An empty widget is not proof that an existing tasks.bin was read
+  // successfully: the current legacy loader can return false silently.
+  // Be conservative about an existing file or an unavailable data folder.
+  const bool empty = ui.tasksListWidget->count() == 0;
+  if (mTasksEmpty) {
+    if (empty) {
+      const QString taskPath = ListOfJobOptions::GetPersistenceFilePath();
+      if (taskPath.isEmpty() || QFileInfo::exists(taskPath)) {
+        mTasksEmpty->setText(tr(
+            "<b>No saved tasks are displayed.</b><br><br>"
+            "A task file already exists, or its folder cannot be accessed. "
+            "This development version cannot confirm that the file was "
+            "read successfully.<br><br>"
+            "If you expected tasks here, do not save new tasks until "
+            "the existing file has been checked."));
+      } else {
+        mTasksEmpty->setText(tr(
+            "<b>No saved tasks yet.</b><br><br>"
+            "After adding a test remote under Storage, use "
+            "<b>Save task</b> in an upload or download dialog.<br><br>"
+            "Saved task files are not encrypted. Do not put passwords "
+            "or access tokens into task options."));
+      }
+    }
+    mTasksEmpty->setVisible(empty);
+    ui.tasksListWidget->setVisible(!empty);
+  }
 }
 
 void MainWindow::runItem(JobOptionsListWidgetItem *item, bool dryrun) {
