@@ -89,6 +89,7 @@ private:
   void updateThemeButton();
   QLabel *mHomeSubtitle = nullptr;
   QLabel *mHomeEmpty = nullptr;
+  QLabel *mTasksEmpty = nullptr; // empty-state text, not a load-success assertion
   bool mSyncingNav = false;
   void buildShell();
   int remoteTab(const QString &name) const;
