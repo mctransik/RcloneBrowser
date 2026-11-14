@@ -17,6 +17,9 @@ public:
   bool Persist(JobOptions *jo);
   bool Forget(JobOptions *jo);
   QList<JobOptions *> &getTasks() { return tasks; }
+  // Conservative UI-only hint: true if a task file is present OR its
+  // location is unavailable. Does not assert deserialization success.
+  static bool MayHaveExistingTaskFile();
 
 signals:
   void tasksListUpdated();
