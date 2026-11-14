@@ -16,6 +16,13 @@
 #include "transfer_dialog.h"
 #include "utils.h"
 
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QTextBrowser>
+#include <QVBoxLayout>
+
 MainWindow::MainWindow() {
   ui.setupUi(this);
 
@@ -190,11 +197,23 @@ MainWindow::MainWindow() {
   });
 
   QObject::connect(ui.about, &QAction::triggered, this, [=, this]() {
-    QMessageBox box(this);
-    box.setWindowTitle(tr("About Rclone Browser"));
-    box.setIconPixmap(qApp->windowIcon().pixmap(64, 64));
-    box.setTextFormat(Qt::RichText);
-    box.setText(QString(
+    // QMessageBox can clip long rich-text attribution on Windows.
+    // A resizable dialog with a scrollable document keeps all credits readable.
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("About Rclone Browser"));
+    dialog.setMinimumSize(520, 320);
+    dialog.resize(680, 420);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *content = new QHBoxLayout();
+    auto *icon = new QLabel(&dialog);
+    icon->setPixmap(qApp->windowIcon().pixmap(64, 64));
+    content->addWidget(icon, 0, Qt::AlignTop);
+
+    auto *details = new QTextBrowser(&dialog);
+    details->setFrameShape(QFrame::NoFrame);
+    details->setOpenExternalLinks(true);
+    details->setHtml(QString(
         R"(<h3>Rclone Browser )" RCLONE_BROWSER_VERSION "</h3>"
         R"(<p><b>Independent cloud-management development fork.</b> This application is)"
         R"( based on the Rclone Browser codebase and is not an official upstream release.)"
@@ -211,7 +230,14 @@ MainWindow::MainWindow() {
         R"( may have separate terms.</p>)"
         R"(<p><b>Development status:</b> Experimental features are still being tested.)"
         R"( GitHub Issues are currently disabled for this fork.</p>)"));
-    box.exec();
+    content->addWidget(details, 1);
+    layout->addLayout(content, 1);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok, &dialog);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog,
+                     &QDialog::accept);
+    layout->addWidget(buttons);
+    dialog.exec();
   });
   QObject::connect(ui.aboutQt, &QAction::triggered, qApp,
                    &QApplication::aboutQt);
@@ -833,6 +859,33 @@ void MainWindow::listTasks() {
                                                      : mUploadIcon,
         jo->description);
     ui.tasksListWidget->addItem(item);
+  }
+
+  // An empty widget is not proof that an existing tasks.bin was read
+  // successfully: the current legacy loader can return false silently.
+  // Be conservative about an existing file or an unavailable data folder.
+  const bool empty = ui.tasksListWidget->count() == 0;
+  if (mTasksEmpty) {
+    if (empty) {
+      if (ListOfJobOptions::MayHaveExistingTaskFile()) {
+        mTasksEmpty->setText(tr(
+            "<b>No saved tasks are displayed.</b><br><br>"
+            "A task file already exists, or its folder cannot be accessed. "
+            "This development version cannot confirm that the file was "
+            "read successfully.<br><br>"
+            "If you expected tasks here, do not save new tasks until "
+            "the existing file has been checked."));
+      } else {
+        mTasksEmpty->setText(tr(
+            "<b>No saved tasks yet.</b><br><br>"
+            "After adding a test remote under Storage, use "
+            "<b>Save task</b> in an upload or download dialog.<br><br>"
+            "Saved task files are not encrypted. Do not put passwords "
+            "or access tokens into task options."));
+      }
+    }
+    mTasksEmpty->setVisible(empty);
+    ui.tasksListWidget->setVisible(!empty);
   }
 }
 

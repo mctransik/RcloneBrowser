@@ -678,6 +678,22 @@ void MainWindow::buildShell() {
     ui.tasksListWidget->setIconSize(QSize(20, 20));
     ui.tasksListWidget->setFont(Theme::uiFont());
 
+    // Visible only when the task list has no entries. The actual message
+    // is set in listTasks(), which also distinguishes an existing tasks.bin
+    // from a genuinely fresh installation.
+    mTasksEmpty = new QLabel(ui.scrollAreaWidgetContentsTasks);
+    mTasksEmpty->setObjectName("TasksEmptyState");
+    mTasksEmpty->setTextFormat(Qt::RichText);
+    mTasksEmpty->setWordWrap(true);
+    mTasksEmpty->setAlignment(Qt::AlignCenter);
+    mTasksEmpty->setProperty("secondary", true);
+    mTasksEmpty->setMinimumHeight(160);
+    mTasksEmpty->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    auto *tasksLayout =
+        qobject_cast<QVBoxLayout *>(ui.scrollAreaWidgetContentsTasks->layout());
+    Q_ASSERT(tasksLayout);
+    tasksLayout->insertWidget(0, mTasksEmpty, 1);
+
     ui.buttonRunTask->setProperty("accent", true);
     ui.buttonDryrunTask->setIcon(Theme::icon("dryrun"));
     ui.buttonEditTask->setIcon(Theme::icon("edit"));
