@@ -841,8 +841,7 @@ void MainWindow::listTasks() {
   const bool empty = ui.tasksListWidget->count() == 0;
   if (mTasksEmpty) {
     if (empty) {
-      const QString taskPath = ListOfJobOptions::GetPersistenceFilePath();
-      if (taskPath.isEmpty() || QFileInfo::exists(taskPath)) {
+      if (ListOfJobOptions::MayHaveExistingTaskFile()) {
         mTasksEmpty->setText(tr(
             "<b>No saved tasks are displayed.</b><br><br>"
             "A task file already exists, or its folder cannot be accessed. "
