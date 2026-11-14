@@ -2,6 +2,7 @@
 #include "task_storage.h"
 #include "task_list_transaction.h"
 #include <QDataStream>
+#include <QFileInfo>
 #include <qdir.h>
 #include <qlogging.h>
 #include <qstandardpaths.h>
@@ -25,6 +26,12 @@ ListOfJobOptions *ListOfJobOptions::getInstance() {
     RestoreFromUserData(*SavedJobOptions);
   }
   return SavedJobOptions;
+}
+
+bool ListOfJobOptions::MayHaveExistingTaskFile() {
+  const QString path = GetPersistenceFilePath();
+  // Do not treat an inaccessible task-data location as a fresh account.
+  return path.isEmpty() || QFileInfo::exists(path);
 }
 
 bool ListOfJobOptions::Persist(JobOptions *jo) {
